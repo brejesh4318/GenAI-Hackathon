@@ -1,0 +1,6 @@
+log_config:
+  filepath: tmp/app_logs.log
+
+llm_model:
+  model_name: gemini_2.5_flash
+  temperature: 1
