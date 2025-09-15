@@ -1,0 +1,29 @@
+[project]
+name = "test-dash"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Your Name",email = "you@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "langchain (>=0.3.27,<0.4.0)",
+    "langchain-community (>=0.3.29,<0.4.0)",
+    "langchain-core (>=0.3.76,<0.4.0)",
+    "langchain-google-genai (>=2.1.10,<3.0.0)",
+    "langgraph (>=0.6.7,<0.7.0)",
+    "torch (>=2.8.0,<3.0.0)",
+    "pypdf2 (>=3.0.1,<4.0.0)",
+    "docx (>=0.2.4,<0.3.0)",
+    "markdown (>=3.9,<4.0)",
+    "exception (>=0.1.0,<0.2.0)",
+    "python-docx (>=1.2.0,<2.0.0)",
+    "langsmith (>=0.4.27,<0.5.0)",
+    "fastapi (>=0.116.1,<0.117.0)",
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
