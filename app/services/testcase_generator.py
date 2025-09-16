@@ -5,12 +5,11 @@ from app.utilities.singletons_factory import DcSingleton
 from app.services.llm_services.graph_state import PipelineState
 
 
-
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
 class TestCaseGenerator(metaclass = DcSingleton):
 
-    def __init__(self, llm: LLMInterface, graph):
+    def __init__(self, graph):
         self.graph = graph
     
     def generate_testcase(self, document_text):

@@ -25,7 +25,13 @@ llm = LlmFactory.get_llm(type=Constants.fetch_constant("llm_model")["model_name"
 graph = GraphPipe(llm=llm)
 testcase_generator =  TestCaseGenerator(graph = graph)
 
-
+mongo_client = MongoImplement(
+    connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
+    db_name=Constants.fetch_constant("mongo_db")["db_name"],
+    max_pool=Constants.fetch_constant("mongo_db")["max_pool_size"],
+    server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
+)
+logger.info("MongoDB client initialized")
 
 router = APIRouter(
     tags= ["Inference"],
@@ -40,7 +46,7 @@ async def root():
 
 
 @router.post("/testcase_generator")
-async def process_testcases(request:Request, prd_id: str=Form(...), project_name: str=Form(...), file: UploadFile= File(...)) :
+async def process_testcases(request:Request, project_name: str=Form(...), file: UploadFile= File(...)) :
     
     try:
         content_bytes = await file.read()
@@ -49,6 +55,26 @@ async def process_testcases(request:Request, prd_id: str=Form(...), project_name
         document_text = Helper.read_file(path)
         os.remove(path=path)
         test_cases = testcase_generator.generate_testcase(document_text=document_text)
+                
+        project_doc = {
+            "project_name": project_name,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        }
+        
+        project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
+        project_result = mongo_client.insert_one(project_collection, project_doc)
+        _id = project_result
+        # Insert test cases into test_cases collection
+        testcases_collection = Constants.fetch_constant("mongo_collections")["testcases"]
+        testcases_doc = {
+            "project_id": _id,
+            "testcases": test_cases,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        }
+        mongo_client.insert_one(testcases_collection, testcases_doc)
+
         return {"test_cases": test_cases}
 
     except Exception as exe:

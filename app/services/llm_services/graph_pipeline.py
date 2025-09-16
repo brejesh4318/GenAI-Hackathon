@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph, END, CompiledStateGraph
+from langgraph.graph import StateGraph, END
 from app.utilities import dc_logger
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_interface import LLMInterface
@@ -22,7 +22,7 @@ class GraphPipe(metaclass=DcSingleton):
         self.output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
 
 
-    def compile_graph(self) -> CompiledStateGraph:
+    def compile_graph(self) :
         workflow_graph = StateGraph(PipelineState)
 
         # ---------- build graph: add nodes ----------

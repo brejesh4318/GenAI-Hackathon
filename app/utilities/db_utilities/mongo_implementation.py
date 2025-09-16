@@ -54,6 +54,7 @@ class MongoImplement(metaclass=DcSingleton):
         session.start_transaction()
         try:
             _id = self.database[collection_name].insert_one(data)
+            _id = _id.inserted_id
             session.commit_transaction()
             logger.info(f"Inserted data to {collection_name}")
             return _id
