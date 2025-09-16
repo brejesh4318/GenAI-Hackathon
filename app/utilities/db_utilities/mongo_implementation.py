@@ -54,10 +54,9 @@ class MongoImplement(metaclass=DcSingleton):
         session.start_transaction()
         try:
             _id = self.database[collection_name].insert_one(data)
-            _id = _id.inserted_id
             session.commit_transaction()
             logger.info(f"Inserted data to {collection_name}")
-            return _id
+            return _id.inserted_id.__str__()
         except Exception as exe:
             logger.error(f"Could not perform insertion on {collection_name} collection || {exe}",exc_info=True)
             session.abort_transaction()

@@ -2,12 +2,13 @@ log_config:
   filepath: tmp/app_logs.log
 
 llm_model:
-  model_name: gemini_2.5_flash
+  # model_name: gemini_2.5_flash
+  model_name: gemini-2.5-flash-lite
   temperature: 1
 
 
 mongo_db:
-  db_name: fundaura
+  db_name: dash-test-nosql
   max_pool_size: 5
   server_selection_timeout: 60000
 

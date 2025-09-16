@@ -1,4 +1,4 @@
-from app.services.llm_services.llm_implementation.gemini_models import Gemini25FlashLLM
+from app.services.llm_services.llm_implementation.gemini_models import Gemini25FlashLLM, Gemini25FlashLiteLLM
 from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities.dc_enums import SupportedLlms
 
@@ -27,5 +27,8 @@ class LlmFactory:
         elif type == SupportedLlms.GEMINI_2_5_FASH.value:
             # import and return the GEMINI_2_5_FASH implementation
             return Gemini25FlashLLM()
+        elif type == SupportedLlms.GEMINI_2_5_FLASH_LITE.value:
+            # return the GEMINI_2_0_FLASH_LITE implementation
+            return Gemini25FlashLiteLLM()
         else:
             raise ValueError(f"No matching LLM implementation found for type: {type}")

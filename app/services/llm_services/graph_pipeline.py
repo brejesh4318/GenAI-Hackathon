@@ -1,11 +1,11 @@
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 from app.utilities import dc_logger
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_interface import LLMInterface
 from app.services.reponse_format import FinalOutput
 from app.utilities.singletons_factory import DcSingleton
 from app.services.llm_services.graph_state import PipelineState
-
 from langchain.output_parsers import PydanticOutputParser
 import uuid
 import json
@@ -20,9 +20,9 @@ class GraphPipe(metaclass=DcSingleton):
         # Initialize LLM and parser once
         self.llm = llm
         self.output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+        self.graph = self.compile_graph()
 
-
-    def compile_graph(self) :
+    def compile_graph(self) ->CompiledStateGraph :
         workflow_graph = StateGraph(PipelineState)
 
         # ---------- build graph: add nodes ----------
@@ -39,6 +39,9 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph.add_edge("test_case_file_generator", END)
 
         return workflow_graph.compile()
+    
+    def invoke_graph(self, document_path) -> PipelineState:
+        return self.graph.invoke({"file_path":document_path })
 
     # ---------------- Graph Nodes ---------------- #
 
@@ -104,7 +107,7 @@ class GraphPipe(metaclass=DcSingleton):
                 - Where requirements are ambiguous, propose multiple possible test cases.  
                     # Example QC results per chunk
             """
-        llm_output = self.llm.generate(prompt).content
+        llm_output = self.llm.generate(prompt)
         logger.info("LLM Test Case Generation Completed")
         return llm_output
 
@@ -143,7 +146,7 @@ class GraphPipe(metaclass=DcSingleton):
                 * **Low** → Minor UI/UX or non-blocking cases.  
             '''
 
-        validated_output = self.llm.generate(prompt).content
+        validated_output = self.llm.generate(prompt)
         logger.info("LLM Test Case Validation Completed")
 
         parsed_output = self.output_parser.parse(validated_output)

@@ -1,5 +1,7 @@
+from app.services.llm_services.graph_pipeline import GraphPipe
 from app.services.llm_services.llm_interface import LLMInterface
 from app.services.reponse_format import FinalOutput
+from langgraph.graph.state import CompiledStateGraph
 from app.utilities import dc_logger
 from app.utilities.singletons_factory import DcSingleton
 from app.services.llm_services.graph_state import PipelineState
@@ -9,11 +11,11 @@ logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"
 
 class TestCaseGenerator(metaclass = DcSingleton):
 
-    def __init__(self, graph):
-        self.graph = graph
+    def __init__(self, graph_pipe:GraphPipe ):
+        self.graph_pipe = graph_pipe
     
-    def generate_testcase(self, document_text):
-        test_cases = self.graph.invoke({"document":document_text})
-        return test_cases
+    def generate_testcase(self, document_path:str):
+        test_cases = self.graph_pipe.invoke_graph(document_path)
+        return test_cases["test_cases_final"]["test_cases"]
 
 
