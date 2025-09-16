@@ -4,3 +4,14 @@ log_config:
 llm_model:
   model_name: gemini_2.5_flash
   temperature: 1
+
+
+mongo_db:
+  db_name: fundaura
+  max_pool_size: 5
+  server_selection_timeout: 60000
+
+mongo_collections:
+  projects_collection: "projects"
+  prompt: "prompts"
+  testcases: "test_cases"
