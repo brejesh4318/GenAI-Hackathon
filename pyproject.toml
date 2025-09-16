@@ -25,8 +25,8 @@ dependencies = [
     "pymongo (>=4.15.0,<5.0.0)",
     "python-multipart (>=0.0.20,<0.0.21)",
 ]
-
-
+[tool.poetry]
+package-mode = false
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
