@@ -1,12 +1,17 @@
     
 
 from pathlib import Path
+from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities import dc_logger
+from app.utilities.constants import Constants
+from langchain.output_parsers import PydanticOutputParser
 from app.utilities.singletons_factory import DcSingleton
+from langchain_core.messages import SystemMessage
 import PyPDF2
 import docx  # for .docx
 import markdown  # for .md
 import os
+
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -64,6 +69,59 @@ class Helper(metaclass = DcSingleton):
         except Exception as exe:
               logger.error("Error occcured in save pdf")
               raise exe 
+        
+    @staticmethod
+    def generate_testcase(llm: LLMInterface, document: str ) -> str:
+        
+        """Calls LLM to generate test cases"""
+        prompt = Constants.fetch_constant("prompts")["test_casegenerator"].format(document=document)    
+        llm_output = llm.generate(prompt)
+        logger.info("LLM Test Case Generation Completed")
+        return llm_output
+    @staticmethod
+    def validator(llm: LLMInterface, document: str, llm_output: str,  output_parser:PydanticOutputParser):
+        
+        """Validate test cases with LLM and enforce structured format"""
+        prompt = Constants.fetch_constant("prompts")["validation_agent"].format(document=document, llm_output=llm_output, output_format=output_parser.get_format_instructions())
+        validated_output = llm.generate(prompt)
+        logger.info("LLM Test Case Validation Completed")
+        parsed_output = output_parser.parse(validated_output)
+        return parsed_output.model_dump()
+    
+    @staticmethod
+    def plan_compliance(llm: LLMInterface, process_document: str) -> dict:
+        """Plan compliance steps based on document"""
+        # Example standards to check against
+        standards = ["FDA", "IEC 62304"]
+
+        prompt = Constants.fetch_constant("prompts")["compliance_agent1"].format(process_document=process_document, standards=standards)
+        llm_output = llm.generate(prompt)
+        logger.info("LLM Compliance Planning Completed")
+        return {"compliance_plan": llm_output}
+    
+    @staticmethod
+    def compliance_answer(llm_with_tools , state: dict) -> dict:
+        """
+        Enriches compliance requirements with authoritative details using RAG and web search tools.
+        """
+
+        logger.info("Sending LLM Compliance Enrichment Request")
+        # enriched_output = self.llm_with_tools.invoke({"messages": [prompt] + state["messages"]})
+        message = {
+        "messages": [
+            llm_with_tools.invoke(
+                [
+                    SystemMessage(
+                        content= Constants.fetch_constant("prompts")["compliance_agent2"]
+                    )
+                ] + ["Compliance Plan: " + state["compliance_plan"]]
+                + state["messages"]
+            )
+        ],
+        "llm_calls": state.get('llm_calls', 0) + 1
+    }
+        logger.info("LLM Compliance Enrichment Completed")
+        return message
 
 
 def _read_docx(file_path: str) -> str:
@@ -89,3 +147,5 @@ def _read_md(file_path: str) -> str:
     html = markdown.markdown(raw_md)
     # strip HTML tags (optional)
     return "".join(html.split("<")[0::2])  # quick strip, or use BeautifulSoup for better parsing
+
+

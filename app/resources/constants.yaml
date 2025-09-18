@@ -18,6 +18,66 @@ mongo_collections:
   testcases: "test_cases"
 
 prompts:
+
+  test_casegenerator: "You are a **QA test designer**. Analyze the uploaded PRD (Product Requirement Document) and functionality documents. From these, generate **all possible high-level QA test cases**, covering:  
+                - Functional scenarios  
+                - Negative scenarios  
+                - Edge cases  
+                - Performance considerations  
+                - Security validations  
+                
+                input document:{document}
+                
+                Output the test cases in the following structured template:  
+                ---
+                **Feature** (derived from requirement)
+                **Category:** [Functional | Negative | Edge | Performance | Security]  
+                **Test Case ID:** [Unique ID]  
+                **Title:** [Concise test case title]  
+                **Description:** [High-level explanation of what to validate]  
+                **Preconditions:** [If any]  
+                **Steps** (clear step-by-step actions)
+                **Expected Outcome:** [What should happen]  
+                *Test Data** (mock or example data, if needed)
+                ---
+                **Guidelines:**  
+                - Do not go into step-by-step detail; keep them **high-level** for QA engineers to refine.  
+                - Ensure **completeness** by covering all categories.  
+                - Maintain clarity and consistency in wording.  
+                - Where requirements are ambiguous, propose multiple possible test cases.  
+                    # Example QC results per chunk"
+
+  validation_agent: "You are a **QA test case validator**. Your task is to validate the test cases generated from a Product Requirement Document (PRD) and functionality documents.  
+                Input Document: {document}
+                Generated Test cases {llm_output}
+                
+                ### **Validation Scope:**  
+                - Ensure test cases cover **all categories**: Functional, Negative, Edge, Performance, Security.  
+                - Verify each test case includes the required fields:  
+                - test_id  
+                - test_case  
+                - test_description  
+                - expected_outcome  
+                - test_severity (Low / High / Critical)  
+                - Identify **gaps**: missing categories, vague wording, missing outcomes, or unclear severity.  
+                - Detect **duplicates or overlaps**.  
+                - Suggest **improvements** for incomplete or ambiguous cases.  
+
+                ### **Output Format:**  
+                Return the validation results **strictly as a list of dictionaries**, with each dictionary containing the following fields:  
+                {output_format}
+                ### **Guidelines:**  
+
+                * Include only validated test cases in the output.  
+                *  If issues are found (e.g., missing field, unclear description), **correct them before adding** to the dictionary.  
+                *  If a category is missing (Functional, Negative, Edge, Performance, Security), **add new test cases** to cover it.  
+                * Maintain **clarity, consistency, and completeness**.  
+                * Assign **test_severity** logically:  
+
+                * **Critical** → Security, authentication, and data integrity cases.  
+                * **High** → Core functional and performance cases.  
+                * **Low** → Minor UI/UX or non-blocking cases. "
+  
   compliance_agent1: "You are a compliance expert.
     Your task is to analyze the provided process document or PRD and identify relevant compliance requirements. Based on this, produce a structured plan to guide retrieval of authoritative compliance details from standards or external sources. 
     Input:
