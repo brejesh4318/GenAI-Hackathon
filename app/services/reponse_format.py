@@ -22,3 +22,26 @@ class FinalOutput(BaseModel):
 
 
 output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+
+
+class ComplianceCitation(BaseModel):
+    standard: str = Field(..., description="Standard name, e.g., IEC-62304 or FDA")
+    section: Optional[str] = Field(None, description="Section identifier or title")
+    page_number: Optional[int] = Field(None, description="Page number if available")
+
+
+class ComplianceSection(BaseModel):
+    standard: str = Field(..., description="Which standard this section maps to")
+    section: Optional[str] = Field(None, description="Section identifier or title (e.g., 4.3, 5.1)")
+    summary: str = Field(..., description="Concise summary relevant to the requirement")
+    citations: List[ComplianceCitation] = Field(default_factory=list)
+
+
+class ComplianceAnswer(BaseModel):
+    requirement: str = Field(..., description="Original requirement or user need")
+    standards_covered: List[str] = Field(..., description="List of standards used (e.g., [IEC-62304, FDA])")
+    sections: List[ComplianceSection] = Field(..., description="Relevant sections per standard with summaries and citations")
+    overall_guidance: str = Field(..., description="Short, actionable guidance synthesizing the standards")
+
+
+compliance_output_parser = PydanticOutputParser(pydantic_object=ComplianceAnswer)
