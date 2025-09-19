@@ -125,7 +125,7 @@ class Helper(metaclass = DcSingleton):
         return message
     
     @staticmethod
-    def time_saved_format(start_time: datetime, end_time: datetime) -> str:
+    def time_saved_format(start_time: datetime, end_time: datetime = datetime.now()) -> str:
         """
         Returns a human-readable string representing the time difference between two datetimes.
 

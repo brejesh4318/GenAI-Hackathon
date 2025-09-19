@@ -49,6 +49,7 @@ async def get_dashboard_data():
         compliance_coverage = 0
         testcases_generated = 0
         compliance_covered = 0
+        timesaved =0
         rescent_projects = []
         projects = mongo_client.read("projects", {}, max_count=3, sort=[("created_at", -1)])
         if projects:
@@ -61,14 +62,15 @@ async def get_dashboard_data():
                         compliance_covered+=1
                 compliance_coverage = (compliance_covered / len(testcases) * 100)
                 testcases_generated = len(testcases)
-                timesaved = round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
+                timesaved += round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
+                
             for project in projects:
                 rescent_projects.append({
                     "projectName": project["project_name"],
                     "projectId": str(project["_id"]),
                     "TestCasesGenerated": project.get("no_test_cases", 0),
                     "description": project.get("description", ""),
-                    "UpdatedTime": Helper.time_saved_format(project.get("updated_at", datetime.now())),
+                    "UpdatedTime": Helper.time_saved_format(project.get("updated_at")),
                     "status": "active" if project.get("no_test_cases", 0) > 0 else "review" if project.get("no_documents", 0) > 0 else "completed"
                 })
         return JSONResponse(content= {
@@ -79,8 +81,10 @@ async def get_dashboard_data():
                 "recentProject": rescent_projects})
                 
     except Exception as exe:
+        logger.error(f"Failed to fetch dashboard data: {exe}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
+
 
 @router.post("/createProject")
 def createProject(request: ProjectCreateRequest):
@@ -119,22 +123,130 @@ def listProjects():
     except:
         pass
 
-@router.get("/getProject/{project_id}")
-def getProject(project_id: str):
+@router.get("/getProjects")
+def getProjects():
     try:
-        pass
-    except: 
-        pass
+        projects = mongo_client.read("projects",query= {})
+        response_projects = []
+        for project in projects:
+            compliances = []
+            test_cases = mongo_client.read("test_cases", {"project_id": ObjectId(str(project["_id"]))})
+            for test_case in test_cases:
+                if test_case.get("compliance_reference_standard") and test_case.get("compliance_reference_standard") not in compliances:
+                    compliances.append(test_case.get("compliance_reference_standard"))
+            
+            data = {
+                "projectName": project["project_name"],
+                "projectId": str(project["_id"]),
+                "description": project.get("description", ""),
+                "TestCasesGenerated": project.get("no_test_cases", 0),
 
-@router.get("/getTestCasses/{project_id}")
+                "documents": project.get("no_documents", 0),
+                "ComplianceReferenceStandards": compliances,
+                "status": "active" if project.get("no_test_cases", 0) > 0 else "review" if project.get("no_documents", 0) > 0 else "completed",
+                "UpdatedTime": Helper.time_saved_format(project.get("updated_at", datetime.now()))
+            }
+            response_projects.append(data)
+        logger.info(f"Fetched {len(response_projects)} projects")
+        return JSONResponse(content={"projects": response_projects}, status_code=status.HTTP_200_OK)
+    except Exception as exe:
+        logger.exception("Failed to fetch project details")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"status": "Failed","message": str(exe),})
+
+@router.get("/getTestCases/{project_id}")
 def getTestCases(project_id: str):
     try:
-        pass
-    except:
-        pass
+        project_details = mongo_client.read("projects", {"_id": ObjectId(project_id)}, max_count=1)
+        if not project_details:
+            logger.warning(f"Project with id '{project_id}' not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail={
+                                    "status": "Failed",
+                                    "message": f"Project with id '{project_id}' not found"
+                                })
+        else:
+            response_testcases = []
+            testcases = mongo_client.read("testcases", {"project_id": project_id})
+            if testcases:
+                for testcase in testcases:
+                    data = {
+                            "testCaseId":testcase.get("test_case_id"),
+                            "testCaseUniqueId": str(testcase["_id"]),
+                            "priority": testcase.get("priority"),
+                            "testCaseName": testcase.get("title"),
+                            "requirement": testcase.get("feature"),
+                            "steps": testcase.get("steps"),
+                            "complianceTags": [testcase.get("compliance_reference_standard")]},
+                    response_testcases.append(data)
+            else:
+                logger.info(f"No test cases found for project id: {project_id}")
+                return {"test_cases": []}
+            return JSONResponse(content={"projectId": project_id, 
+                                         "projectName": project_details[0].get("project_name"),
+                                         "test_cases": response_testcases}, status_code=status.HTTP_200_OK)
+    except Exception as exe:
+        logger.exception("Failed to fetch test cases")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"status": "Failed","message": str(exe),})
 
+@router.get("/getTestCaseDetain/{testcase_id}")
+def getTestCaseDetail(testcase_id: str):
+    try:
+        testcase = mongo_client.read("testcases", {"_id": ObjectId(testcase_id)}, max_count=1)
+        if not testcase:
+            logger.warning(f"Test case with id '{testcase_id}' not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail={
+                                    "status": "Failed",
+                                    "message": f"Test case with id '{testcase_id}' not found"
+                                })
+        else:
+            data ={
+                    "id": testcase["test_case_id"],
+                    "featureModule": testcase["feature"],
+                    "title": testcase["title"], 
+                    "type": testcase["type"],
+                    "priority": testcase["priority"],
+                    "status": "active",
+                    "preconditions": testcase["preconditions"],
+                    "testData": [{"field": i["field"], "value": i["value"]} for i in testcase["test_data"]],
+                    "stepsToExecute": testcase["steps"],
+                    "expectedResults": testcase["expected_result"],
+                    "postconditions": testcase["postconditions"],
+                    "complianceStandard": testcase["compliance_reference_standard"],
+                    "complianceClause": testcase["compliance_reference_clause"],
+                    "complianceRequirementText": testcase["compliance_reference_requirement_text"]
+                    }
+            return JSONResponse(content={"test_case": data}, status_code=status.HTTP_200_OK)
+    except Exception as exe:
+        logger.exception("Failed to fetch test case details")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"status": "Failed","message": str(exe),})
 
-
+# @router.get("/compliancePage")
+# def getCompliancePage():
+#     try:
+#         total_test_cases_generated = 0
+#         compliance_test_cases= 0
+#         compliance_coverage = 0
+#         test_saved = 0
+#         test_cases_standards = {}
+#         testcases = mongo_client.read("testcases", {})
+#         compliance_data = []
+#         if testcases:
+#             total_test_cases_generated = len(testcases)
+#             for testcase in testcases:
+#                 if testcase["compliance_reference_standard"]:
+#                     data = {"project_id": str(testcase["project_id"]),
+#                             "standard": testcase["compliance_reference_standard"],
+#                             "clause": testcase["compliance_reference_clause"],
+#                             "requirement": testcase["compliance_reference_clause"],
+#                             "linkedTestCases":}
+#             compliance_coverage = (compliance_test_cases / len(testcases) * 100)
+#             test_saved = round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
+#     except:
+#         pass
 
 @router.post("/testcaseGenerator")
 async def process_testcases(
@@ -184,16 +296,11 @@ async def process_testcases(
         # Generate test cases
         test_cases = testcase_generator.generate_testcase(document_path=path)
         logger.info( f"Generated {len(test_cases)} test cases for project: {project_name}")
-
+        test_cases =test_cases = [{"project_id": project_id, **tc} for tc in test_cases]
         # Insert test cases into collection
         testcases_collection = Constants.fetch_constant("mongo_collections")["testcases"]
-        testcases_doc = {
-            "project_id": project_id,
-            "testcases": test_cases,
-            "created_at": datetime.now(),
-            "updated_at": datetime.now()
-        }
-        testcases_result = mongo_client.insert_one(testcases_collection, testcases_doc)
+
+        testcases_result = mongo_client.insert_many(testcases_collection, test_cases)
         logger.info(
             f"Inserted testcases into collection '{testcases_collection}' result: {testcases_result}"
         )
