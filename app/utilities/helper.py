@@ -1,5 +1,6 @@
     
 
+from datetime import datetime
 from pathlib import Path
 from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities import dc_logger
@@ -71,10 +72,10 @@ class Helper(metaclass = DcSingleton):
               raise exe 
         
     @staticmethod
-    def generate_testcase(llm: LLMInterface, document: str ) -> str:
+    def generate_testcase(llm: LLMInterface, document: str , compliance_info) -> str:
         
         """Calls LLM to generate test cases"""
-        prompt = Constants.fetch_constant("prompts")["test_casegenerator"].format(document=document)    
+        prompt = Constants.fetch_constant("prompts")["test_casegenerator"].format(document=document, compliance_info=compliance_info)    
         llm_output = llm.generate(prompt)
         logger.info("LLM Test Case Generation Completed")
         return llm_output
@@ -122,6 +123,38 @@ class Helper(metaclass = DcSingleton):
     }
         logger.info("LLM Compliance Enrichment Completed")
         return message
+    
+    @staticmethod
+    def time_saved_format(start_time: datetime, end_time: datetime) -> str:
+        """
+        Returns a human-readable string representing the time difference between two datetimes.
+
+        Args:
+            start_time (datetime): The start time.
+            end_time (datetime): The end time.
+
+        Returns:
+            str: Time difference in days, hours, minutes, or seconds.
+        """
+        diff = end_time - start_time
+        total_seconds = int(diff.total_seconds())
+        days = total_seconds // (3600 * 24)
+        hours = (total_seconds % (3600 * 24)) // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+
+        if days >= 1:
+            return f"{days} day{'s' if days != 1 else ''}"
+        elif hours >= 1:
+            return f"{hours} hour{'s' if hours != 1 else ''}"
+        elif minutes >= 1:
+            return f"{minutes} minute{'s' if minutes != 1 else ''}"
+        else:
+            return f"{seconds} second{'s' if seconds != 1 else ''}"
+
+
+
+
 
 
 def _read_docx(file_path: str) -> str:

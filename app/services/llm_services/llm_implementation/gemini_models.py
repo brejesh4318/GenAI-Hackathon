@@ -41,7 +41,7 @@ class Gemini25FlashLiteLLM(LLMInterface):
             api_key=EnvironmentVariableRetriever.get_env_variable("GEMINI_API_KEY")
         )
 
-    def get_llm(self) -> "Gemini25FlashLLM":
+    def get_llm(self) -> "Gemini25FlashLiteLLM":
         """
         Static method to get an instance of Gemini25FlashLLM.
 
