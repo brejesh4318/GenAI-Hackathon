@@ -307,7 +307,7 @@ async def process_testcases(
         updated_no_test_cases = existing_projects[-1]["no_test_cases"] + len(test_cases)
         updated_no_documents = existing_projects[-1]["no_documents"] + 1
         mongo_client.update_one(
-            collection_name=Constants.fetch_constant("mongo_collections")["projects"],
+            collection_name=Constants.fetch_constant("mongo_collections")["projects_collection"],
             query={"_id": ObjectId(project_id)},
             data={
                 "no_test_cases": updated_no_test_cases,
