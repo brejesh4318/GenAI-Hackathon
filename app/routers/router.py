@@ -91,7 +91,6 @@ async def get_dashboard_data():
 def createProject(request: ProjectCreateRequest):
     logger.info(f"Creating project: {request.project_name}")
     try:
-        project_collection = project_collection
         existing_projects = mongo_client.read(project_collection, {"project_name": request.project_name}, max_count=1)
         if existing_projects:
             logger.warning(f"Project with name '{request.project_name}' already exists")
