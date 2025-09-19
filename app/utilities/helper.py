@@ -95,8 +95,11 @@ class Helper(metaclass = DcSingleton):
         )
         validated_output = llm.generate(prompt)
         logger.info("LLM Test Case Validation Completed")
-        # This is the retry-sensitive part
-        parsed_output = output_parser.parse(validated_output)
+        try:
+            parsed_output = output_parser.parse(validated_output)
+        except OutputParserException as e:
+            logger.error(f"Parsing failed: {e}. Retrying...")
+            raise e
         return parsed_output.model_dump()
     
     @staticmethod

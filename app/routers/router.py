@@ -252,7 +252,7 @@ def getTestCaseDetail(testcase_id: str):
 @router.post("/testcaseGenerator")
 async def process_testcases(
     request: Request,
-    project_id: str = Form(),
+    project_id: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
     filename = None
@@ -274,7 +274,6 @@ async def process_testcases(
         logger.info(f"Saved uploaded file to temp path: {path}")
 
         # Fetch project by name
-        project_collection = project_collection
         existing_projects = mongo_client.read(
             project_collection,
             {"_id": ObjectId(project_id)},
