@@ -95,7 +95,7 @@ class GraphPipe(metaclass=DcSingleton):
     def test_case_validator(self, state: PipelineState):
         logger.info("Validating and refining test cases")
         testcases_details = Helper.validator(
-            llm=self.llm,
+            llm=self.llm_tools,
             document=state["document"],
             llm_output=state["test_cases_lv1"],
             output_parser=self.output_parser
@@ -144,60 +144,4 @@ class GraphPipe(metaclass=DcSingleton):
             return "tool_node"
         logger.info("No tool call detected, ending workflow")
         return "test_case_generator"
-
-class ComplianceGraphPipe(metaclass=DcSingleton):
-    def __init__(self, llm: LLMInterface) :
-        logger.info("Initializing ComplianceGraphPipe")
-        self.llm = llm
-        self.graph = self.compile_graph()
-        self.tools = []
-        self.bind_tools()
-        logger.info("ComplianceGraphPipe initialized successfully")
-
-    def bind_tools(self):
-        logger.info("Binding tools to ComplianceGraphPipe LLM")
-        tavily = web_search_tool()
-        self.tools.append(tavily)
-        self.tools.append(retrieve_by_standards)
-        llm = self.llm.get_llm()
-        self.llm_with_tools = llm.bind_tools(self.tools)
-        self.tools_by_name = {tool.name: tool for tool in self.tools}
-        logger.info(f"Tools bound: {[tool.name for tool in self.tools]}")
-
-    def compile_graph(self) -> CompiledStateGraph:
-        logger.info("Compiling compliance workflow graph")
-        agent_builder = StateGraph(MessagesState)
-        agent_builder.add_node("plan_compliance", self.plan_compliance)
-        agent_builder.add_node("compliance_answer", self.compliance_answer)
-        agent_builder.add_node("tool_node", self.tool_node)
-
-        agent_builder.set_entry_point("plan_comliance")
-        agent_builder.add_edge("plan_comliance", "compliance_answer")
-        agent_builder.add_conditional_edges("compliance_answer", self.should_continue, {"tool_node": "tool_node", END: END})
-        agent_builder.add_edge("tool_node", "compliance_answer")
-
-        logger.info("Compliance workflow graph compiled successfully")
-        return agent_builder.compile()
-    
-    def tool_node(self, state: dict):
-        logger.info("Performing tool calls in ComplianceGraphPipe")
-        result = []
-        for tool_call in state["messages"][-1].tool_calls:
-            logger.info(f"Invoking tool: {tool_call['name']} with args: {tool_call['args']}")
-            tool = self.tools_by_name[tool_call["name"]]
-            observation = tool.invoke(tool_call["args"])
-            logger.debug(f"Tool {tool_call['name']} observation: {observation}")
-            result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
-        logger.info("Tool calls completed in ComplianceGraphPipe")
-        return {"messages": result}
-    
-    def should_continue(self, state: MessagesState):
-        messages = state["messages"]
-        last_message = messages[-1]
-        logger.info("Checking if should continue or end in ComplianceGraphPipe")
-        if last_message.tool_calls:
-            logger.info("Tool call detected, continuing to tool_node in ComplianceGraphPipe")
-            return "tool_node"
-        logger.info("No tool call detected, ending workflow in ComplianceGraphPipe")
-        return END
 

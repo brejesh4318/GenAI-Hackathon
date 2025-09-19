@@ -12,7 +12,8 @@ import PyPDF2
 import docx  # for .docx
 import markdown  # for .md
 import os
-
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from langchain_core.exceptions import OutputParserException
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -79,13 +80,22 @@ class Helper(metaclass = DcSingleton):
         llm_output = llm.generate(prompt)
         logger.info("LLM Test Case Generation Completed")
         return llm_output
+    
     @staticmethod
-    def validator(llm: LLMInterface, document: str, llm_output: str,  output_parser:PydanticOutputParser):
-        
-        """Validate test cases with LLM and enforce structured format"""
-        prompt = Constants.fetch_constant("prompts")["validation_agent"].format(document=document, llm_output=llm_output, output_format=output_parser.get_format_instructions())
+    @retry(retry=retry_if_exception_type(OutputParserException), stop=stop_after_attempt(2), wait=wait_fixed(2))
+    def validator(llm: "LLMInterface", document: str, llm_output: str, output_parser: "PydanticOutputParser"):
+        """
+        Validate test cases with LLM and enforce structured format.
+        Retries parsing if OutputParserException occurs (max 2 attempts, 2 sec delay).
+        """
+        prompt = Constants.fetch_constant("prompts")["validation_agent"].format(
+            document=document,
+            llm_output=llm_output,
+            output_format=output_parser.get_format_instructions()
+        )
         validated_output = llm.generate(prompt)
         logger.info("LLM Test Case Validation Completed")
+        # This is the retry-sensitive part
         parsed_output = output_parser.parse(validated_output)
         return parsed_output.model_dump()
     

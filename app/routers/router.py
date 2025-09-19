@@ -2,7 +2,7 @@ import os
 import uuid
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File
-from typing import Optional
+from typing import List, Optional
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 # from jose import JWTError, jwt
@@ -30,7 +30,8 @@ mongo_client = MongoImplement(
     server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
 )
 logger.info("MongoDB client initialized")
-
+project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
+testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
 router = APIRouter(
     tags= ["Inference"],
     responses={status.HTTP_404_NOT_FOUND: {"description":"notfound"}}
@@ -53,7 +54,7 @@ async def get_dashboard_data():
         rescent_projects = []
         projects = mongo_client.read("projects", {}, max_count=3, sort=[("created_at", -1)])
         if projects:
-            testcases = mongo_client.read("testcases", {}) 
+            testcases = mongo_client.read("test_cases", {}) 
             logger.info(f"Fetched {len(projects)} recent projects for dashboard")
             logger.info(f"Len Testcases {len(testcases)}")
             if testcases:
@@ -90,7 +91,7 @@ async def get_dashboard_data():
 def createProject(request: ProjectCreateRequest):
     logger.info(f"Creating project: {request.project_name}")
     try:
-        project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
+        project_collection = project_collection
         existing_projects = mongo_client.read(project_collection, {"project_name": request.project_name}, max_count=1)
         if existing_projects:
             logger.warning(f"Project with name '{request.project_name}' already exists")
@@ -157,7 +158,7 @@ def getProjects():
 @router.get("/getTestCases/{project_id}")
 def getTestCases(project_id: str):
     try:
-        project_details = mongo_client.read("projects", {"_id": ObjectId(project_id)}, max_count=1)
+        project_details = mongo_client.read(project_collection, {"_id": ObjectId(project_id)}, max_count=1)
         if not project_details:
             logger.warning(f"Project with id '{project_id}' not found")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
@@ -167,7 +168,7 @@ def getTestCases(project_id: str):
                                 })
         else:
             response_testcases = []
-            testcases = mongo_client.read("testcases", {"project_id": project_id})
+            testcases = mongo_client.read(testcase_collection, {"project_id": project_id})
             if testcases:
                 for testcase in testcases:
                     data = {
@@ -181,19 +182,18 @@ def getTestCases(project_id: str):
                     response_testcases.append(data)
             else:
                 logger.info(f"No test cases found for project id: {project_id}")
-                return {"test_cases": []}
             return JSONResponse(content={"projectId": project_id, 
                                          "projectName": project_details[0].get("project_name"),
                                          "test_cases": response_testcases}, status_code=status.HTTP_200_OK)
     except Exception as exe:
-        logger.exception("Failed to fetch test cases")
+        logger.error(f"Failed to fetch test cases {exe}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
 
-@router.get("/getTestCaseDetain/{testcase_id}")
+@router.get("/getTestCaseDetail/{testcase_id}")
 def getTestCaseDetail(testcase_id: str):
     try:
-        testcase = mongo_client.read("testcases", {"_id": ObjectId(testcase_id)}, max_count=1)
+        testcase = mongo_client.read(testcase_collection, {"_id": ObjectId(testcase_id)}, max_count=1)
         if not testcase:
             logger.warning(f"Test case with id '{testcase_id}' not found")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
@@ -202,6 +202,7 @@ def getTestCaseDetail(testcase_id: str):
                                     "message": f"Test case with id '{testcase_id}' not found"
                                 })
         else:
+            testcase = testcase[0]
             data ={
                     "id": testcase["test_case_id"],
                     "featureModule": testcase["feature"],
@@ -210,7 +211,8 @@ def getTestCaseDetail(testcase_id: str):
                     "priority": testcase["priority"],
                     "status": "active",
                     "preconditions": testcase["preconditions"],
-                    "testData": [{"field": i["field"], "value": i["value"]} for i in testcase["test_data"]],
+                    "testData": [{"field": i[0], 
+                                  "value": i[1]} for i in testcase["test_data"].items()],
                     "stepsToExecute": testcase["steps"],
                     "expectedResults": testcase["expected_result"],
                     "postconditions": testcase["postconditions"],
@@ -252,14 +254,14 @@ def getTestCaseDetail(testcase_id: str):
 async def process_testcases(
     request: Request,
     project_id: str = Form(),
-    project_name: str = Form(...),
-    file: UploadFile = File(...)
+    files: List[UploadFile] = File(...)
 ):
     filename = None
+    file = files[0] ##TODO handle multiple files
     try:
         logger.info(
             f"Request from: {getattr(request.client, 'host', 'unknown')}, "
-            f"project: {project_name}, incoming file: {file.filename}"
+            f"project: {project_id}, incoming file: {file.filename}"
         )
 
         # Read uploaded file
@@ -273,7 +275,7 @@ async def process_testcases(
         logger.info(f"Saved uploaded file to temp path: {path}")
 
         # Fetch project by name
-        project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
+        project_collection = project_collection
         existing_projects = mongo_client.read(
             project_collection,
             {"_id": ObjectId(project_id)},
@@ -281,24 +283,24 @@ async def process_testcases(
         )
 
         if not existing_projects:
-            logger.warning(f"Project '{project_name}' not found")
+            logger.warning(f"Project '{project_id}' not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
                     "status": "Failed",
-                    "message": f"Project '{project_name}' not found"
+                    "message": f"Project '{project_id}' not found"
                 }
             )
 
         project_id = str(existing_projects[0]["_id"])
-        logger.info(f"Found existing project '{project_name}' with _id: {project_id}")
+        logger.info(f"Found existing project '{project_id}' with _id: {project_id}")
 
         # Generate test cases
         test_cases = testcase_generator.generate_testcase(document_path=path)
-        logger.info( f"Generated {len(test_cases)} test cases for project: {project_name}")
-        test_cases =test_cases = [{"project_id": project_id, **tc} for tc in test_cases]
+        logger.info( f"Generated {len(test_cases)} test cases for project: {project_id}")
+        test_cases = [{"project_id": str(project_id), **tc} for tc in test_cases]
         # Insert test cases into collection
-        testcases_collection = Constants.fetch_constant("mongo_collections")["testcases"]
+        testcases_collection = testcase_collection
 
         testcases_result = mongo_client.insert_many(testcases_collection, test_cases)
         logger.info(
@@ -307,7 +309,7 @@ async def process_testcases(
         updated_no_test_cases = existing_projects[-1]["no_test_cases"] + len(test_cases)
         updated_no_documents = existing_projects[-1]["no_documents"] + 1
         mongo_client.update_one(
-            collection_name="projects",
+            collection_name=Constants.fetch_constant("mongo_collections")["projects"],
             query={"_id": ObjectId(project_id)},
             data={
                 "no_test_cases": updated_no_test_cases,
@@ -316,7 +318,7 @@ async def process_testcases(
             }
         )
         logger.info("Updated Project details in db")
-        return {"test_cases": test_cases}
+        return JSONResponse(content={"status": "success"}, status_code=status.HTTP_200_OK)
 
     except Exception as exe:
         logger.exception("Failed to process testcase generation request")
