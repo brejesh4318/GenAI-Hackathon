@@ -1,11 +1,13 @@
 import base64
+import io
 import json
 import os
 import uuid
+import pandas as pd
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File
 from typing import List
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 # from jose import JWTError, jwt
 # from passlib.context import CryptContext
 from datetime import datetime
@@ -72,7 +74,7 @@ async def get_dashboard_data():
                 for testcase in testcases:
                     if testcase["compliance_reference_standard"]:
                         compliance_covered+=1
-                compliance_coverage = (compliance_covered / len(testcases) * 100)
+                compliance_coverage = int(compliance_covered / len(testcases) * 100)
                 testcases_generated = len(testcases)
                 timesaved += round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
                 
@@ -350,7 +352,61 @@ async def process_testcases(
             logger.exception("Failed to remove temp file in finally block")
 
 
+@router.get("/export/{project_id}")
+def export_test_cases(project_id: str):
+    try:
+        # 1. Get project
+        project = mongo_client.read(project_collection, {"_id": ObjectId(project_id)})
+        if not project:
+            logger.warning(f"Project with id '{project_id}' not found")
+            raise HTTPException(status_code=404, detail="Project not found")
 
+        # 2. Get test cases
+        test_cases = list(mongo_client.read(testcase_collection, {"project_id": project_id}))
+        if not test_cases:
+            logger.warning(f"No test cases found for project id '{project_id}'")
+            raise HTTPException(status_code=404, detail="No test cases found for this project")
 
+        # 3. Normalize data for CSV
+        data = []
+        for tc in test_cases:
+            data.append({
+                "Test Case ID": tc.get("test_case_id"),
+                "Feature": tc.get("feature"),
+                "Title": tc.get("title"),
+                "Type": tc.get("type"),
+                "Priority": tc.get("priority"),
+                "Preconditions": "\n".join(tc.get("preconditions", [])) if tc.get("preconditions") else "",
+                "Test Data": str(tc.get("test_data")) if tc.get("test_data") else "",
+                "Steps": "\n".join(tc.get("steps", [])) if tc.get("steps") else "",
+                "Expected Result": "\n".join(tc.get("expected_result", [])) if tc.get("expected_result") else "",
+                "Postconditions": tc.get("postconditions") or "",
+                "Compliance Standard": tc.get("compliance_reference_standard") or "",
+                "Compliance Clause": tc.get("compliance_reference_clause") or "",
+                "Compliance Requirement": tc.get("compliance_reference_requirement_text") or ""
+            })
 
+        # 4. Create DataFrame
+        df = pd.DataFrame(data)
 
+        # 5. Save to in-memory CSV
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+        buffer.seek(0)
+
+        # 6. Stream CSV response
+        filename = f"{project[0]['project_name']}_test_cases.csv"
+        logger.info(f"Exporting {len(test_cases)} test cases for project '{project[0]['project_name']}'")
+        return StreamingResponse(
+            buffer,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as exe:
+        logger.error(f"Failed to export test cases for project id '{project_id}'")
+        raise HTTPException(
+            status_code=500,
+            detail={"status": "Failed", "message": str(exe)}
+        )

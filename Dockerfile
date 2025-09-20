@@ -47,9 +47,8 @@ WORKDIR /opt
 # Copy dependency files and install
 COPY pyproject.toml poetry.lock* /opt/
 RUN poetry install --no-interaction --no-ansi
-
-# Upgrade certifi + pymongo for MongoDB Atlas TLS
-RUN pip install --upgrade certifi pymongo
-
+RUN pip install pandas
 # Copy application files
 COPY . /opt
+
+CMD ["gunicorn", "app.main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080"]
