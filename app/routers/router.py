@@ -74,7 +74,7 @@ async def get_dashboard_data():
                 for testcase in testcases:
                     if testcase["compliance_reference_standard"]:
                         compliance_covered+=1
-                compliance_coverage = int(compliance_covered / len(testcases) * 100)
+                compliance_coverage = int((compliance_covered / len(testcases)) * 100)
                 testcases_generated = len(testcases)
                 timesaved += round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
                 
