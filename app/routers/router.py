@@ -1,13 +1,14 @@
+import base64
+import json
 import os
 import uuid
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File
-from typing import List, Optional
+from typing import List
 from fastapi.responses import JSONResponse
-from fastapi.security import OAuth2PasswordBearer
 # from jose import JWTError, jwt
 # from passlib.context import CryptContext
-from datetime import datetime, timedelta, UTC
+from datetime import datetime
 from app.routers.datamodel import ProjectCreateRequest
 from app.services.testcase_generator import TestCaseGenerator
 from app.utilities import dc_logger
@@ -17,12 +18,27 @@ from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
 from app.services.llm_services.graph_pipeline import GraphPipe
+
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
+router = APIRouter(
+    tags= ["Inference"],
+    responses={status.HTTP_404_NOT_FOUND: {"description":"notfound"}}
+)
+logger.info("router is initialized")
+
+def create_gcp_admin():
+    gcp_config = EnvironmentVariableRetriever.get_env_variable("GOOGLE_CRED")
+    gcp_dict = json.loads(base64.b64decode(gcp_config))
+    with open("gcp_admin.json", "w") as f:
+        json.dump(gcp_dict, f)
+    logger.info("GCP admin credentials written to gcp_admin.json")
+    return gcp_dict
+create_gcp_admin()
+
 llm = LlmFactory.get_llm(type=Constants.fetch_constant("llm_model")["model_name"])
 llm_tools = LlmFactory.get_llm(type="gemini_2.5_flash")
 graph_pipeline = GraphPipe(llm=llm, llm_tools=llm_tools)
 testcase_generator =  TestCaseGenerator(graph_pipe = graph_pipeline)
-
 mongo_client = MongoImplement(
     connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
     db_name=Constants.fetch_constant("mongo_db")["db_name"],
@@ -32,11 +48,6 @@ mongo_client = MongoImplement(
 logger.info("MongoDB client initialized")
 project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
 testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
-router = APIRouter(
-    tags= ["Inference"],
-    responses={status.HTTP_404_NOT_FOUND: {"description":"notfound"}}
-)
-logger.info("vectordb router is initialized")
 
 
 @router.get("/")

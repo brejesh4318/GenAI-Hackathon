@@ -2,8 +2,9 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities.env_util import EnvironmentVariableRetriever
+from app.utilities.singletons_factory import DcSingleton
 
-class Gemini25FlashLLM(LLMInterface):
+class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
@@ -34,7 +35,7 @@ class Gemini25FlashLLM(LLMInterface):
         return self.llm.invoke(prompt).content
 
 
-class Gemini25FlashLiteLLM(LLMInterface):
+class Gemini25FlashLiteLLM(LLMInterface,  metaclass =DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",

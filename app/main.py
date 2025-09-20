@@ -1,6 +1,6 @@
+from app.routers.router import router
 import time
 from fastapi import FastAPI, Request
-from app.routers.router import router
 from app.utilities import dc_logger 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -37,4 +37,4 @@ async def root():
 subapi = FastAPI()
 subapi.include_router(router)
 app.mount("/v1/dash-test", subapi)
-logger.info("main intitialized")
+logger.info("main initialized")
