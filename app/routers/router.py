@@ -224,7 +224,7 @@ def getTestCaseDetail(testcase_id: str):
                     "status": "active",
                     "preconditions": testcase["preconditions"],
                     "testData": [{"field": i[0], 
-                                  "value": i[1]} for i in testcase["test_data"].items()],
+                                  "value": i[1]} for i in testcase["test_data"].items()] if testcase["test_data"] else [],
                     "stepsToExecute": testcase["steps"],
                     "expectedResults": testcase["expected_result"],
                     "postconditions": testcase["postconditions"],
