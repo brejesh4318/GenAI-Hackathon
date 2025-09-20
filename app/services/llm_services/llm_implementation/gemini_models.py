@@ -8,7 +8,8 @@ class Gemini25FlashLLM(LLMInterface):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=temperature,
-            api_key=EnvironmentVariableRetriever.get_env_variable("GEMINI_API_KEY")
+            api_key=None,
+            
         )
 
     def get_llm(self) -> "Gemini25FlashLLM":
@@ -38,10 +39,10 @@ class Gemini25FlashLiteLLM(LLMInterface):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",
             temperature=temperature,
-            api_key=EnvironmentVariableRetriever.get_env_variable("GEMINI_API_KEY")
+            api_key=None
         )
 
-    def get_llm(self) -> "Gemini25FlashLLM":
+    def get_llm(self) -> "Gemini25FlashLiteLLM":
         """
         Static method to get an instance of Gemini25FlashLLM.
 

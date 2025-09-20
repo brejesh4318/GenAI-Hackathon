@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_google_community.vertex_rank import VertexAIRank
 from langchain_tavily import TavilySearch
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from app.utilities import dc_logger
 from app.utilities.env_util import EnvironmentVariableRetriever
 
@@ -46,7 +47,7 @@ reranker = VertexAIRank(
     location_id="global",
     ranking_config="default_ranking_config",
     title_field="source",
-    top_n=5,
+    top_n=3, ##TODO to transfer to constants
 )
 
 retriever = vector_store.as_retriever(search_kwargs={"k": 20})
@@ -56,28 +57,61 @@ retriever_with_reranker = ContextualCompressionRetriever(
 )
 
 
+from typing import List, Dict, Any, Union
+
 @tool
-def retrieve_by_standards(query: str, standard: str) -> List[Dict[str, Any]]:
+def retrieve_by_standards(query: Union[str, List[str]], 
+                          standard: Union[str, List[str]]) -> List[Dict[str, Any]]:
     """
-    Retrieves documents related to a specific compliance standard using RAG.
-    Supports FDA and IEC 62304.
+    Retrieve compliance-related documents from the vector database (RAG pipeline).
+
+    Arguments:
+        query (str | List[str]): One or more queries describing what compliance information to search.
+        standard (str | List[str]): One or more compliance standards to restrict retrieval to.
+            Must be "FDA", "IEC-62304", or a list of these values.
+
+    Returns:
+        List[Dict[str, Any]]: Each dictionary contains the page content of a relevant document.
     """
-    logger.info(f"RAG Tool Invoked with query: {query} and standard: {standard}")
+    try:
+        # Normalize to lists
+        if isinstance(query, str):
+            queries = [query]
+        else:
+            queries = query
 
-    filters = [Namespace(name="doc_name", allow_tokens=["IEC-62304"])]
-    docs = retriever_with_reranker.invoke(query, config={"filter": filters})
+        if isinstance(standard, str):
+            standards = [standard]
+        else:
+            standards = standard
 
-    all_docs = [
-        {
-            "query": query,
-            "standard": standard,
-            "contents": getattr(d, "page_content", ""),
-        }
-        for d in docs
-    ]
+        # Validate standards
+        valid_standards = {"FDA", "IEC-62304"}
+        invalid = set(standards) - valid_standards
+        if invalid:
+            raise ValueError(f"Unsupported standards: {invalid}. Allowed: {valid_standards}")
 
-    logger.info(f"RAG Tool Retrieved {len(all_docs)} documents")
-    return all_docs
+        all_docs = []
+
+        # Run retrieval per query
+        for q in queries:
+            filters = [Namespace(name="doc_name", allow_tokens=standards)]
+            docs = retriever_with_reranker.invoke(q, filter=filters)
+
+            for d in docs:
+                all_docs.append({
+                    "query": q,
+                    "standard": standards,
+                    "content": getattr(d, "page_content", "")
+                })
+
+        logger.info(f"RAG Tool Retrieved {len(all_docs)} documents")
+        return all_docs
+
+    except Exception as e:
+        logger.error(f"Error in retrieve_by_standards: {e}")
+        return []
+
 
 
 def web_search_tool(top_k: int = 5) -> List[Dict[str, Any]]:

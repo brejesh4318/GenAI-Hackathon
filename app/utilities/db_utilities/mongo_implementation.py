@@ -167,13 +167,13 @@ class MongoImplement(metaclass=DcSingleton):
         session = self.client.start_session(causal_consistency=True)
         session.start_transaction()
         try:
-            if '_id' in query.keys():
-                if len(query['_id']['$in'])>10:
-                    logger.info(f"Fetching documents from {collection_name} || query = {query['_id']['$in'][:10]} ....")
-                else:
-                    logger.info(f"Fetching documents from {collection_name} || query = {query}")
-            else:
-                logger.info(f"Fetching documents from {collection_name} || query = {query}")
+            # if '_id' in query.keys():
+            #     if len(query['_id']['$in'])>10:
+            #         logger.info(f"Fetching documents from {collection_name} || query = {query['_id']['$in'][:10]} ....")
+            #     else:
+            #         logger.info(f"Fetching documents from {collection_name} || query = {query}")
+            # else:
+            #     logger.info(f"Fetching documents from {collection_name} || query = {query}")
             if max_count:
                 resp = self.database[collection_name].find(
                     filter=query, projection=col_names, sort=sort

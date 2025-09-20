@@ -1,4 +1,6 @@
-from typing import TypedDict, List, Dict, Optional
+import operator
+from typing import Annotated, TypedDict, List, Dict, Optional
+from langchain_core.messages import AnyMessage
 
 
 class PipelineState(TypedDict):
@@ -6,6 +8,8 @@ class PipelineState(TypedDict):
     document: str
     test_cases_lv1: str
     test_cases_final: dict
+    compliance_plan: str
+    messages: Annotated[list[AnyMessage], operator.add]
 
 
 class ComplianceState(TypedDict, total=False):
