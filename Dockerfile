@@ -48,8 +48,5 @@ WORKDIR /opt
 COPY pyproject.toml poetry.lock* /opt/
 RUN poetry install --no-interaction --no-ansi
 
-# Upgrade certifi + pymongo for MongoDB Atlas TLS
-RUN pip install --upgrade certifi pymongo
-
 # Copy application files
 COPY . /opt

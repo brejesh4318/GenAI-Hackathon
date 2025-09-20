@@ -1,0 +1,11 @@
+*.csv
+test.ipynb_checkpoint   
+test.ipynb
+*.json
+.venv/
+.vscode/
+*.txt
+.env
+tmp/
+__pycache__/
+*.pyc
