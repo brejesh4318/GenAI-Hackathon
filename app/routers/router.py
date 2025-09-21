@@ -263,7 +263,7 @@ def getTestCaseDetail(testcase_id: str):
 #         pass
 
 @router.post("/testcaseGenerator")
-async def process_testcases(
+async def generate_testcases(
     request: Request,
     project_id: str = Form(...),
     files: List[UploadFile] = File(...)
