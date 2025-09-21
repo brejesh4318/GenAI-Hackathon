@@ -15,3 +15,7 @@ class LLMInterface( metaclass=DcSingleton):
     @abstractmethod
     def generate(self) -> str:
         pass
+
+    @abstractmethod
+    async def agenerate(self) -> str:
+        pass

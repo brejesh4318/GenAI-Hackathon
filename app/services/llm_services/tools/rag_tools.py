@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from google.cloud import aiplatform
 from google.cloud.aiplatform.matching_engine.matching_engine_index_endpoint import Namespace
 from langchain_google_vertexai import VertexAIEmbeddings, VectorSearchVectorStore
@@ -10,8 +10,6 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 from app.utilities import dc_logger
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.singletons_factory import DcSingleton
-from typing import List, Dict, Any, Union
-
 
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"tools": "V1"})
@@ -48,6 +46,8 @@ class RAGRetriever(metaclass=DcSingleton):
         return my_index, my_index_endpoint
 
     def _get_vectorstore(self) -> VectorSearchVectorStore:
+        # VertexAIEmbeddings and VectorSearchVectorStore setup is synchronous
+        # but the resulting objects support async operations.
         embeddings = VertexAIEmbeddings(model_name="text-embedding-005")
         return VectorSearchVectorStore.from_components(
             project_id=PROJECT_ID,
@@ -91,7 +91,7 @@ def retrieve_by_standards(query: Union[str, List[str]],
             standards = standard
 
         # Validate standards
-        valid_standards = {"FDA", "IEC-62304"}
+        valid_standards = {"FDA", "IEC-62304", "ISO-27001","ISO-13485"}
         invalid = set(standards) - valid_standards
         if invalid:
             raise ValueError(f"Unsupported standards: {invalid}. Allowed: {valid_standards}")
