@@ -72,7 +72,7 @@ def retrieve_by_standards(query: Union[str, List[str]],
     Arguments:
         query (str | List[str]): One or more queries describing what compliance information to search.
         standard (str | List[str]): One or more compliance standards to restrict retrieval to.
-            Must be "FDA", "IEC-62304", or a list of these values.
+            Must be "FDA", "IEC-62304", ISO-27001, ISO-13485.
 
     Returns:
         List[Dict[str, Any]]: Each dictionary contains the page content of a relevant document.

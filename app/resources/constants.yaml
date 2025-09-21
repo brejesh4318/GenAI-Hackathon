@@ -1,6 +1,8 @@
 log_config:
   filepath: tmp/app_logs.log
 
+tmp_dir: /tmp
+
 llm_model:
   # model_name: gemini_2.5_flash
   model_name: gemini-2.5-flash-lite
@@ -110,7 +112,7 @@ prompts:
             Your task is to take the structured compliance output from the first agent (Relevant Requirements, Compliance Plan) and enrich it with authoritative compliance details using the tools provided.
 
             Input:
-            - Relevant Requirements: List of specific compliance requirements identified by Agent 1.
+            - Relevant Requirements: List of specific compliance requirements identified by Compliance Expert Agent.
 
             Instructions:
             Use Given Tools to get relevant compliance
@@ -129,7 +131,7 @@ prompts:
             For each enriched requirement, generate a structured compliance entry:
 
             Enriched Compliance Requirements:
-            - Standard Name: [FDA / IEC 62304]
+            - Standard Name: [FDA / IEC 62304 / ISO 13485 / ISO 27001]
             - Clause/ID: [e.g., 21 CFR Part 11.10, IEC 62304 A.9.2.1]
             - Requirement Title: [Short descriptive title]
             - Requirement Text: [Generate based on retrieved info from RAG or Websearch]

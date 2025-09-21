@@ -56,7 +56,7 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph.add_node("files_parser", self.file_parser)
         workflow_graph.add_node("test_case_generator", self.test_case_generator)
         workflow_graph.add_node("test_case_validator", self.test_case_validator)
-        workflow_graph.add_node("test_case_file_generator", self.test_case_file_generator)
+        # workflow_graph.add_node("test_case_file_generator", self.test_case_file_generator)
         
         workflow_graph.add_node("plan_compliance", self.compliance_planner_agent)
         workflow_graph.add_node("compliance_answer", self.compliance_reacher_agent)
@@ -68,8 +68,8 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph.add_edge("tool_node", "compliance_answer")
         # connect nodes in execution order
         workflow_graph.add_edge("test_case_generator", "test_case_validator")
-        workflow_graph.add_edge("test_case_validator", "test_case_file_generator")
-        workflow_graph.add_edge("test_case_file_generator", END)
+        # workflow_graph.add_edge("test_case_validator", "test_case_file_generator")
+        workflow_graph.add_edge("test_case_validator", END)
 
         logger.info("Workflow graph compiled successfully")
         return workflow_graph.compile()
@@ -83,7 +83,7 @@ class GraphPipe(metaclass=DcSingleton):
     def file_parser(self, state: PipelineState):
         logger.info(f"Parsing file: {state['file_path']}")
         document = Helper.read_file(file_path=state["file_path"])
-        logger.debug(f"Document parsed: {document[:200]}...")  # Log first 200 chars
+        logger.info(f"Document parsed: {len(document.split())} words")
         return {"document": document}
 
     def test_case_generator(self, state: PipelineState):
