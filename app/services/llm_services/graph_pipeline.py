@@ -1,28 +1,19 @@
-import operator
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 from app.utilities import dc_logger
-from app.utilities.constants import Constants
 from app.utilities.helper import Helper
-from app.services.llm_services.llm_interface import LLMInterface
+from app.services.llm_services.llm_interface import LLMInterface 
 from app.services.reponse_format import FinalOutput
 from app.utilities.singletons_factory import DcSingleton
-from app.services.llm_services.graph_state import PipelineState
+from app.services.llm_services.graph_state import PipelineState 
 from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool
 from langchain.output_parsers import PydanticOutputParser
 import uuid
 from langchain_core.messages import ToolMessage
 import json
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
 from langchain_core.messages import AnyMessage
 
-
-
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
-class MessagesState(TypedDict):
-    compliance_plan: str
-    messages: Annotated[list[AnyMessage], operator.add]
-    llm_calls: int
 
 
 class GraphPipe(metaclass=DcSingleton):
@@ -32,9 +23,9 @@ class GraphPipe(metaclass=DcSingleton):
         self.llm = llm
         self.llm_tools = llm_tools
         self.output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
-        self.graph = self.compile_graph()
         self.tools = []
         self.bind_tools()
+        self.graph = self.compile_graph() # Graph compilation is synchronous
         logger.info("GraphPipe initialized successfully")
 
     def bind_tools(self):
@@ -57,7 +48,7 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph.add_node("test_case_generator", self.test_case_generator)
         workflow_graph.add_node("test_case_validator", self.test_case_validator)
         # workflow_graph.add_node("test_case_file_generator", self.test_case_file_generator)
-        
+
         workflow_graph.add_node("plan_compliance", self.compliance_planner_agent)
         workflow_graph.add_node("compliance_answer", self.compliance_reacher_agent)
         workflow_graph.add_node("tool_node", self.tool_node)
@@ -135,7 +126,7 @@ class GraphPipe(metaclass=DcSingleton):
         logger.info("Tool calls completed")
         return {"messages": result}
     
-    def should_continue(self, state: MessagesState):
+    def should_continue(self, state: PipelineState):
         messages = state["messages"]
         last_message = messages[-1]
         logger.info("Checking if should continue or end")

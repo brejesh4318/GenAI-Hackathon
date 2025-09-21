@@ -1,4 +1,3 @@
-import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities.env_util import EnvironmentVariableRetriever
@@ -34,8 +33,21 @@ class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
         """
         return self.llm.invoke(prompt).content
 
+    async def agenerate(self, prompt: str) -> str:
+        """
+        Asynchronously generates output from Gemini 2.5 Flash model for the given prompt.
+        Uses the asynchronous `ainvoke` method of the underlying LLM.
 
-class Gemini25FlashLiteLLM(LLMInterface,  metaclass =DcSingleton):
+        Args:
+            prompt (str): The prompt to send to the LLM.
+
+        Returns:
+            str: The asynchronously generated output from the LLM.
+        """
+        return (await self.llm.ainvoke(prompt)).content
+
+
+class Gemini25FlashLiteLLM(LLMInterface, metaclass=DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",
@@ -63,3 +75,16 @@ class Gemini25FlashLiteLLM(LLMInterface,  metaclass =DcSingleton):
             str: The generated output from the LLM.
         """
         return self.llm.invoke(prompt).content
+
+    async def agenerate(self, prompt: str) -> str:
+        """
+        Asynchronously generates output from Gemini 2.5 Flash Lite model for the given prompt.
+        Uses the asynchronous `ainvoke` method of the underlying LLM.
+
+        Args:
+            prompt (str): The prompt to send to the LLM.
+
+        Returns:
+            str: The asynchronously generated output from the LLM.
+        """
+        return (await self.llm.ainvoke(prompt)).content

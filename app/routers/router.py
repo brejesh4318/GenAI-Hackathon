@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -101,7 +102,7 @@ async def get_dashboard_data():
 
 
 @router.post("/createProject")
-def createProject(request: ProjectCreateRequest):
+async def createProject(request: ProjectCreateRequest):
     logger.info(f"Creating project: {request.project_name}")
     try:
         existing_projects = mongo_client.read(project_collection, {"project_name": request.project_name}, max_count=1)
@@ -128,16 +129,16 @@ def createProject(request: ProjectCreateRequest):
         logger.exception("Failed to create project")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
-    
+
 @router.get("/listProjects")
-def listProjects():
+async def listProjects(): 
     try:
         pass
     except:
         pass
 
 @router.get("/getProjects")
-def getProjects():
+async def getProjects():
     try:
         projects = mongo_client.read("projects",query= {})
         response_projects = []
@@ -147,7 +148,6 @@ def getProjects():
             for test_case in test_cases:
                 if test_case.get("compliance_reference_standard") and test_case.get("compliance_reference_standard") not in compliances:
                     compliances.append(test_case.get("compliance_reference_standard"))
-            
             data = {
                 "projectName": project["project_name"],
                 "projectId": str(project["_id"]),
@@ -168,7 +168,7 @@ def getProjects():
                             detail={"status": "Failed","message": str(exe),})
 
 @router.get("/getTestCases/{project_id}")
-def getTestCases(project_id: str):
+async def getTestCases(project_id: str):
     try:
         project_details = mongo_client.read(project_collection, {"_id": ObjectId(project_id)}, max_count=1)
         if not project_details:
@@ -203,7 +203,7 @@ def getTestCases(project_id: str):
                             detail={"status": "Failed","message": str(exe),})
 
 @router.get("/getTestCaseDetail/{testcase_id}")
-def getTestCaseDetail(testcase_id: str):
+async def getTestCaseDetail(testcase_id: str):
     try:
         testcase = mongo_client.read(testcase_collection, {"_id": ObjectId(testcase_id)}, max_count=1)
         if not testcase:
@@ -307,7 +307,7 @@ async def generate_testcases(
         logger.info(f"Found existing project '{project_id}' with _id: {project_id}")
 
         # Generate test cases
-        test_cases = testcase_generator.generate_testcase(document_path=path)
+        test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path)
         logger.info( f"Generated {len(test_cases)} test cases for project: {project_id}")
         test_cases = [{"project_id": str(project_id), **tc} for tc in test_cases]
         # Insert test cases into collection
@@ -368,7 +368,7 @@ async def upload_file(file: UploadFile = File(...)):
         return {"status": "error", "message": str(e)}
 
 @router.get("/export/{project_id}")
-def export_test_cases(project_id: str):
+async def export_test_cases(project_id: str):
     try:
         # 1. Get project
         project = mongo_client.read(project_collection, {"_id": ObjectId(project_id)})
