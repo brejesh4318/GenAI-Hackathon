@@ -46,20 +46,20 @@ class Helper(metaclass = DcSingleton):
             
     
     @staticmethod
-    def save_pdf(tmp_path: str, content: bytes, filename: str) -> str:
+    def save_file(tmp_path: str, content: bytes, filename: str) -> str:
         """
-        Save a PDF file from binary content to a specified temporary path.
+        Save a file from binary content to a specified temporary path.
 
         Args:
-            tmp_path (str): The temporary path to save the PDF file.
-            content (bytes): The binary content of the PDF file.
-            filename (str): The name of the PDF file.
+            tmp_path (str): The temporary path to save the file.
+            content (bytes): The binary content of the file.
+            filename (str): The name of the file.
 
         Returns:
-            str: The path where the PDF file is saved.
+            str: The path where the file is saved.
 
         Raises:
-            Exception: If there is an error saving the PDF file.
+            Exception: If there is an error saving the file.
         """
         try:
             if not os.path.exists(tmp_path):
@@ -106,7 +106,7 @@ class Helper(metaclass = DcSingleton):
     def plan_compliance(llm: LLMInterface, process_document: str) -> dict:
         """Plan compliance steps based on document"""
         # Example standards to check against
-        standards = ["FDA", "IEC 62304"]
+        standards = ["FDA", "IEC-62304", "ISO-13485", "ISO-27001"]
 
         prompt = Constants.fetch_constant("prompts")["compliance_agent1"].format(process_document=process_document, standards=standards)
         llm_output = llm.generate(prompt)
@@ -181,9 +181,9 @@ def _read_txt(file_path: str) -> str:
 def _read_pdf(file_path: str):
     with open(file_path, 'rb') as pdf_file:
         reader = PyPDF2.PdfReader(pdf_file)
-    pages_text = []
-    for page in reader.pages:
-        pages_text.append(page.extract_text())
+        pages_text = []
+        for page in reader.pages:
+            pages_text.append(page.extract_text())
     return "\n".join(pages_text)
 
 def _read_md(file_path: str) -> str:

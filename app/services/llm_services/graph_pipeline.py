@@ -83,7 +83,7 @@ class GraphPipe(metaclass=DcSingleton):
     def file_parser(self, state: PipelineState):
         logger.info(f"Parsing file: {state['file_path']}")
         document = Helper.read_file(file_path=state["file_path"])
-        logger.debug(f"Document parsed: {document[:200]}...")  # Log first 200 chars
+        logger.info(f"Document parsed: {len(document.split())} words")
         return {"document": document}
 
     def test_case_generator(self, state: PipelineState):

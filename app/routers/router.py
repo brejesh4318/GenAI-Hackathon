@@ -283,7 +283,7 @@ async def process_testcases(
             f"Read uploaded file bytes: {len(content_bytes)} bytes, saving as: {filename}"
         )
 
-        path = Helper.save_pdf("tmp", content=content_bytes, filename=filename)
+        path = Helper.save_file("/tmp", content=content_bytes, filename=filename)
         logger.info(f"Saved uploaded file to temp path: {path}")
 
         # Fetch project by name
@@ -351,6 +351,21 @@ async def process_testcases(
         except Exception:
             logger.exception("Failed to remove temp file in finally block")
 
+@router.post("/uploadFile")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        filename = file.filename
+
+        # Save the uploaded file
+        path = Helper.save_file("/tmp", content=content, filename=filename)
+        logger.info(f"Saved uploaded file to: {path}")
+        file_content = Helper.read_file(file_path=path)
+        logger.info(f"Read file content: {len(file_content.split())} words")
+        return {"status": "success", "file_path": path}
+    except Exception as e:
+        logger.error(f"Failed to upload file: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @router.get("/export/{project_id}")
 def export_test_cases(project_id: str):
