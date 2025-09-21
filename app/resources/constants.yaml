@@ -21,7 +21,7 @@ mongo_collections:
 
 prompts:
 
-  test_casegenerator: "You are a QA test designer. Analyze the uploaded PRD (Product Requirement Document) and functionality documents. From these, generate all possible high-level QA test cases, covering:
+  test_casegenerator: "You are a QA test designer in healthcare software. Analyze the uploaded PRD (Product Requirement Document) and functionality documents. From these, generate all possible high-level QA test cases, covering:
 
               Functional scenarios
               Negative scenarios
@@ -79,7 +79,7 @@ prompts:
                         * Low → Minor UI/UX or optional features.
                       * Always map compliance requirements if applicable."
   
-  compliance_agent1: "You are a Compliance Expert Agent.
+  compliance_agent1: "You are a Compliance Expert Agent in healthcare industry.
                       Your task is to analyze the provided product/process document and identify relevant compliance requirements.
                       You must summarize the document in a way that helps the next agent (who has access to RAG and web search tools) efficiently retrieve authoritative compliance details.
           
