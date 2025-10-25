@@ -175,3 +175,5 @@ test.ipynb
 *.ipynb
 *.docx
 *.pdf
+*.txt
+*.json
