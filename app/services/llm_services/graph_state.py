@@ -4,11 +4,21 @@ from langchain_core.messages import AnyMessage
 
 
 class PipelineState(TypedDict):
+    status: str
+    user_interrupt: str
+    next_action: str
+    summary: str
+    scratchpad: dict
+    notes: str
     file_path: str
     document: str
+    document_context: str
     test_cases_lv1: str
     test_cases_final: dict
     compliance_plan: str
+    brain_agent_message: str
+    brain_agent_action: str
+    brain_agent_scratchpad: dict
     messages: Annotated[list[AnyMessage], operator.add]
 
 

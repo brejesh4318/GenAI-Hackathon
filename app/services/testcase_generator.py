@@ -15,10 +15,15 @@ class TestCaseGenerator(metaclass = DcSingleton):
 
     def __init__(self, graph_pipe:GraphPipe ):
         self.graph_pipe = graph_pipe
+
     
     def generate_testcase(self, document_path:str):
-        config = RunnableConfig(recursion_limit=50)
+        config = RunnableConfig(recursion_limit=50, configurable={"thread_id": "thread-1"})
+        
         test_cases = self.graph_pipe.invoke_graph(document_path, config=config)
+        while test_cases["__interrupt__"]:
+            logger.info("Resuming interrupted workflow")
+            test_cases = self.graph_pipe.resume_graph(command=f"{input(f"{test_cases["__interrupt__"]}")}", config=config, state=test_cases)
         return test_cases["test_cases_final"]["test_cases"]
 
 

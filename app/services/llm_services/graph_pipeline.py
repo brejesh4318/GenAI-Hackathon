@@ -1,17 +1,21 @@
+import uuid
+import json
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
+from langchain.output_parsers import PydanticOutputParser
+from langchain_core.messages import ToolMessage
+from langchain_core.messages import AnyMessage
+from langgraph.types import interrupt, Command
+
+from app.services.prompt_fetch import PromptFetcher
 from app.utilities import dc_logger
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_interface import LLMInterface 
-from app.services.reponse_format import FinalOutput
+from app.services.reponse_format import AgentFormat, FinalOutput
 from app.utilities.singletons_factory import DcSingleton
 from app.services.llm_services.graph_state import PipelineState 
 from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool
-from langchain.output_parsers import PydanticOutputParser
-import uuid
-from langchain_core.messages import ToolMessage
-import json
-from langchain_core.messages import AnyMessage
+
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -23,6 +27,7 @@ class GraphPipe(metaclass=DcSingleton):
         self.llm = llm
         self.llm_tools = llm_tools
         self.output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+        self.brain_output_parser = PydanticOutputParser(pydantic_object=AgentFormat)
         self.tools = []
         self.bind_tools()
         self.graph = self.compile_graph() # Graph compilation is synchronous
@@ -45,30 +50,44 @@ class GraphPipe(metaclass=DcSingleton):
         # ---------- build graph: add nodes ----------
         workflow_graph.set_entry_point("files_parser")
         workflow_graph.add_node("files_parser", self.file_parser)
+        workflow_graph.add_node("context_agent",self.context_agent)
+        workflow_graph.add_node("brain_agent", self.brain_agent)
+        workflow_graph.add_node("interrupt_node", self.interrupt_node)
+        workflow_graph.add_node("compliance_research", self.compliance_reacher_agent)
         workflow_graph.add_node("test_case_generator", self.test_case_generator)
         workflow_graph.add_node("test_case_validator", self.test_case_validator)
         # workflow_graph.add_node("test_case_file_generator", self.test_case_file_generator)
 
-        workflow_graph.add_node("plan_compliance", self.compliance_planner_agent)
-        workflow_graph.add_node("compliance_answer", self.compliance_reacher_agent)
         workflow_graph.add_node("tool_node", self.tool_node)
+        workflow_graph.add_edge("files_parser", "context_agent")
+        workflow_graph.add_edge("context_agent", "brain_agent")
+        workflow_graph.add_conditional_edges("brain_agent", self.brain_router)
 
-        workflow_graph.add_edge("files_parser", "plan_compliance")
-        workflow_graph.add_edge("plan_compliance", "compliance_answer")
-        workflow_graph.add_conditional_edges("compliance_answer", self.should_continue, {"tool_node": "tool_node", "test_case_generator": "test_case_generator"})
+        workflow_graph.add_conditional_edges("compliance_research", self.should_continue, {"tool_node": "tool_node", "test_case_generator": "test_case_generator"})
         workflow_graph.add_edge("tool_node", "compliance_answer")
         # connect nodes in execution order
-        workflow_graph.add_edge("test_case_generator", "test_case_validator")
+        workflow_graph.add_edge("test_case_generator", "brain_agent")
+        workflow_graph.add_edge("interrupt_node", "brain_agent")
+        workflow_graph.add_edge("brain_agent", "test_case_validator")
         # workflow_graph.add_edge("test_case_validator", "test_case_file_generator")
         workflow_graph.add_edge("test_case_validator", END)
-
+        workflow_graph = workflow_graph.compile()
         logger.info("Workflow graph compiled successfully")
+        png = workflow_graph.get_graph().draw_mermaid_png()
+        with open("workflow_graph.png", "w") as f:
+            f.write(png)
         return workflow_graph.compile()
     
-    def invoke_graph(self, document_path) -> PipelineState:
+    def invoke_graph(self, document_path, config) -> PipelineState:
         logger.info(f"Invoking graph with document_path: {document_path}")
-        result = self.graph.invoke({"file_path":document_path })
+        result = self.graph.invoke({"file_path":document_path }, config=config)
         logger.info("Graph invocation completed")
+        return result
+    
+    def resume_graph(self, command, config) -> PipelineState:
+        logger.info(f"Resuming graph with command: {command}")
+        result = self.graph.invoke(Command(resume=command), config=config)
+        logger.info("Graph Resumption completed")
         return result
 
     def file_parser(self, state: PipelineState):
@@ -135,4 +154,48 @@ class GraphPipe(metaclass=DcSingleton):
             return "tool_node"
         logger.info("No tool call detected, ending workflow")
         return "test_case_generator"
+    
+    def brain_router(self, state: PipelineState):
+        next_action = state["next_action"]
+        logger.info(f"Checking if checking brain route or end for action {next_action}")
+        if next_action == "send_compliance_planner":
+            return "compliance_research"
+        elif next_action == "test_case_generate":
+            return "test_case_generator"
+        elif next_action == "user_interrupt":
+            return "interrupt_node"
+        elif next_action == "process_complete":
+            return "test_case_validator"
+        else:
+            logger.warning(f"Unknown next action: {next_action}, ending workflow")
+            return END
 
+
+
+    def brain_agent(self, state: PipelineState):
+        logger.info("Running brain agent")
+        result = Helper.brain_agent(self.llm_tools, state=state)
+        state["status"] = result.status
+        state["next_action"] = result.next_action
+        state["summary"] = result.summary
+        state["scratchpad"] = result.scratchpad
+        state["notes"] = result.notes
+        if result.user_interrupt: 
+            state["user_interrupt"] = result.user_interrupt 
+        logger.debug(f"Brain agent result: {result}")
+        return state
+    
+    def context_agent(self, state: dict):
+        logger.info("Running context agent")
+        result = Helper.context_builder(self.llm, state=state)
+        logger.debug(f"Context agent result: {result}")
+        state["document_context"] = result
+        state["brain_agent_message"] = f"Context Generation is completed here is the context information {state["document_context"]}"
+        return state
+    
+    def interrupt_node(self, state: PipelineState):
+        logger.info("Running interrupt node")
+        user_messager = interrupt(state["user_interrupt"])
+        state["brain_agent_message"] = f"here is the user messages {user_messager} for the question asked {state['user_interrupt']}" 
+        state["user_interrupt"] = ""  # reset after processing
+        return state
