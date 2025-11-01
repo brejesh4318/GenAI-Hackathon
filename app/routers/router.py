@@ -262,13 +262,13 @@ async def getTestCaseDetail(testcase_id: str):
 #     except:
 #         pass
 
-@router.post("/testcaseGenerator/{requst_type}")
+@router.post("/testcaseGenerator/{request_type}")
 async def generate_testcases(
     request: Request,
     request_type: str,
     project_id: str = Form(...),
     command: Optional[str] = Form(None),
-    files: Optional[List[UploadFile]] = File(...),
+    files: Optional[List[UploadFile]] = File(None),
 ):
     # Fetch project by name
     filename=None
