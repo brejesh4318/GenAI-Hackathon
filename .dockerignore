@@ -9,3 +9,5 @@ test.ipynb
 tmp/
 __pycache__/
 *.pyc
+*.db
+*.db-*

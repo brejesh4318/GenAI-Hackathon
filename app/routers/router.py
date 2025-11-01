@@ -7,7 +7,7 @@ import uuid
 import pandas as pd
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File
-from typing import List
+from typing import List, Optional
 from fastapi.responses import JSONResponse, StreamingResponse
 # from jose import JWTError, jwt
 # from passlib.context import CryptContext
@@ -20,7 +20,7 @@ from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
-from app.services.llm_services.graph_pipeline import GraphPipe
+from app.services.llm_services.graph_pipeline import GraphPipe, memory
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 router = APIRouter(
@@ -262,52 +262,85 @@ async def getTestCaseDetail(testcase_id: str):
 #     except:
 #         pass
 
-@router.post("/testcaseGenerator")
+@router.post("/testcaseGenerator/{requst_type}")
 async def generate_testcases(
     request: Request,
+    request_type: str,
     project_id: str = Form(...),
-    files: List[UploadFile] = File(...)
+    command: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(...),
 ):
-    filename = None
-    file = files[0] ##TODO handle multiple files
-    try:
-        logger.info(
-            f"Request from: {getattr(request.client, 'host', 'unknown')}, "
-            f"project: {project_id}, incoming file: {file.filename}"
+    # Fetch project by name
+    filename=None
+    existing_projects = mongo_client.read(project_collection,{"_id": ObjectId(project_id)},max_count=1)
+
+    if not existing_projects:
+        logger.warning(f"Project '{project_id}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "status": "Failed",
+                "message": f"Project '{project_id}' not found"
+            }
         )
 
-        # Read uploaded file
-        content_bytes = await file.read()
-        filename = f"{uuid.uuid4()}_{file.filename}"
-        logger.info(
-            f"Read uploaded file bytes: {len(content_bytes)} bytes, saving as: {filename}"
+    project_id = str(existing_projects[0]["_id"])
+    logger.info(f"Found existing project '{project_id}' with _id: {project_id}")
+    if request_type == "resume" and not command:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": "Failed",
+                "message": "Missing 'command' form data for resume request type"
+            }
         )
-
-        path = Helper.save_file("/tmp", content=content_bytes, filename=filename)
-        logger.info(f"Saved uploaded file to temp path: {path}")
-
-        # Fetch project by name
-        existing_projects = mongo_client.read(
-            project_collection,
-            {"_id": ObjectId(project_id)},
-            max_count=1
-        )
-
-        if not existing_projects:
-            logger.warning(f"Project '{project_id}' not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "status": "Failed",
-                    "message": f"Project '{project_id}' not found"
-                }
+    if request_type =="resume":
+        logger.info(f"Resuming testcase generation for project: {project_id}")
+        test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=None, project_id=project_id, invoke_type=request_type, invoke_command=command)
+    else:
+        logger.info(f"Starting new testcase generation for project: {project_id}")
+        memory.delete_thread(thread_id=project_id)
+        filename = None
+        file = files[0] ##TODO handle multiple files
+        try:
+            logger.info(
+                f"Request from: {getattr(request.client, 'host', 'unknown')}, "
+                f"project: {project_id}, incoming file: {file.filename}"
             )
 
-        project_id = str(existing_projects[0]["_id"])
-        logger.info(f"Found existing project '{project_id}' with _id: {project_id}")
+            # Read uploaded file
+            content_bytes = await file.read()
+            filename = f"{uuid.uuid4()}_{file.filename}"
+            logger.info(
+                f"Read uploaded file bytes: {len(content_bytes)} bytes, saving as: {filename}"
+            )
 
-        # Generate test cases
-        test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path)
+            path = Helper.save_file("/tmp", content=content_bytes, filename=filename)
+            logger.info(f"Saved uploaded file to temp path: {path}")
+
+
+            # Generate test cases
+            test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path, project_id=project_id, invoke_type=request_type, invoke_command=command)
+        except Exception as exe:
+            logger.exception("Failed to process testcase generation request")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "status": "Failed",
+                    "message": str(exe),
+                }
+            )
+    try:
+        if test_cases["type"] == "interrupt":
+            logger.info("Test case generation interrupted for user input")
+            return JSONResponse(
+                content={
+                    "status": "interrupt",
+                    "message": test_cases["response"]
+                },
+                status_code=status.HTTP_200_OK  
+            )
+        test_cases = test_cases["response"]
         logger.info( f"Generated {len(test_cases)} test cases for project: {project_id}")
         test_cases = [{"project_id": str(project_id), **tc} for tc in test_cases]
         # Insert test cases into collection

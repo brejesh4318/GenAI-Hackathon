@@ -177,3 +177,6 @@ test.ipynb
 *.pdf
 *.txt
 *.json
+
+*.db
+*.db-*

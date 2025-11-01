@@ -1,3 +1,4 @@
+from setuptools import Command
 from app.services.llm_services.graph_pipeline import GraphPipe
 from app.services.llm_services.llm_interface import LLMInterface
 from app.services.reponse_format import FinalOutput
@@ -17,13 +18,22 @@ class TestCaseGenerator(metaclass = DcSingleton):
         self.graph_pipe = graph_pipe
 
     
-    def generate_testcase(self, document_path:str):
-        config = RunnableConfig(recursion_limit=50, configurable={"thread_id": "thread-1"})
+    def generate_testcase(self, project_id: str, invoke_type: str = "new", invoke_command: str = "", document_path=None)->dict:
+        config = RunnableConfig(recursion_limit=50, configurable={"thread_id": project_id})
         
-        test_cases = self.graph_pipe.invoke_graph(document_path, config=config)
-        while test_cases["__interrupt__"]:
-            logger.info("Resuming interrupted workflow")
-            test_cases = self.graph_pipe.resume_graph(command=f"{input(f"{test_cases["__interrupt__"]}")}", config=config, state=test_cases)
-        return test_cases["test_cases_final"]["test_cases"]
+        if invoke_type =="new" and document_path:
+            response = self.graph_pipe.invoke_graph(document_path, config=config)
+        elif invoke_type == "resume" and invoke_command:
+            response = self.graph_pipe.resume_graph(command=invoke_command, config=config)
+        else:
+            raise ValueError("Invalid invoke_type or missing invoke_command for resume")
+        if "__interrupt__" in response and response["__interrupt__"]:
+            prompt = response["__interrupt__"][-1].value
+            # last_msg = response["messages"][-1].content
+            # user_input = input(f"{last_msg}\n\n{prompt}\n\nYour Input: ")
+            return {"response": f"{prompt}", "type": "interrupt"}
+        else:
+            return {"response": response["test_cases_final"]["test_cases"], "type": "final"}
+                
 
 

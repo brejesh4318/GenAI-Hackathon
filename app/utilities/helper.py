@@ -21,8 +21,7 @@ from langchain_core.exceptions import OutputParserException
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 fetch_prompt = PromptFetcher()
 brain_agent_prompt = fetch_prompt.fetch("spec2test-brain-agent")
-
-
+compiance_reacher_prompt = fetch_prompt.fetch("compliance-researcher-agent")
 class Helper(metaclass = DcSingleton):
     @staticmethod
     def read_file(file_path: str) -> str:
@@ -131,9 +130,9 @@ class Helper(metaclass = DcSingleton):
             llm_with_tools.invoke(
                 [
                     SystemMessage(
-                        content= Constants.fetch_constant("prompts")["compliance_agent2"]
+                        content= compiance_reacher_prompt
                     )
-                ] + ["Compliance Plan: " + state["compliance_plan"]]
+                ] + ["Document Information: " + state["document"]]
                 + state["messages"]
             )
         ],
@@ -169,13 +168,13 @@ class Helper(metaclass = DcSingleton):
             return f"{minutes} minute{'s' if minutes != 1 else ''}"
         else:
             return f"{seconds} second{'s' if seconds != 1 else ''}"
-    
-    def brain_agent(self, llm_tools:LLMInterface , state: PipelineState, output_parser: PydanticOutputParser)->AgentFormat:
+    @staticmethod
+    def brain_agent(llm_tools:LLMInterface , state: PipelineState, output_parser: PydanticOutputParser)->AgentFormat:
         try:
             system_prompt = SystemMessage(content=brain_agent_prompt)
-            message = [system_prompt] + state["brain_agent_message"]
+            message = [system_prompt] + [state["brain_agent_message"]]
             message += [f"here is your scratchpad {state['brain_agent_scratchpad']}"] if state.get("brain_agent_scratchpad") else []
-            message += [f"here are your notes {state['notes']}"] if state.get("notes") else []
+            # message += [f"here are your notes {state['notes']}"] if state.get("notes") else []
             message += [f"here is your previous status {state['status']}"] if state.get("status") else []
             message += [f"here is your previous next action {state['next_action']}"] if state.get("next_action") else []
             message += [f"here is your previous summary {state['summary']}"] if state.get("summary") else []
@@ -188,12 +187,12 @@ class Helper(metaclass = DcSingleton):
             raise e
         
     @staticmethod
-    def context_builder( llm: LLMInterface, state):
+    def context_builder( llm: LLMInterface, state: PipelineState):
         prompt = Constants.fetch_constant("prompts")["context_agent"] 
         system_prompt= SystemMessage(content=prompt)
-        response = llm.generate([system_prompt] + state["messages"])
+        response = llm.get_llm().invoke([system_prompt] + [f'Here is the document: {state["document"]}'])
         logger.info("LLM Context Builder Completed")
-        return  response
+        return  response.content
     
 def _read_docx(file_path: str) -> str:
     doc = docx.Document(file_path)

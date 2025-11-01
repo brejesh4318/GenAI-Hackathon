@@ -170,6 +170,25 @@ frozenlist = ">=1.1.0"
 typing-extensions = {version = ">=4.2", markers = "python_version < \"3.13\""}
 
 [[package]]
+name = "aiosqlite"
+version = "0.21.0"
+description = "asyncio bridge to the standard sqlite3 module"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "aiosqlite-0.21.0-py3-none-any.whl", hash = "sha256:2549cf4057f95f53dcba16f2b64e8e2791d7e1adedb13197dd8ed77bb226d7d0"},
+    {file = "aiosqlite-0.21.0.tar.gz", hash = "sha256:131bb8056daa3bc875608c631c678cda73922a2d4ba8aec373b19f18c17e7aa3"},
+]
+
+[package.dependencies]
+typing_extensions = ">=4.0"
+
+[package.extras]
+dev = ["attribution (==1.7.1)", "black (==24.3.0)", "build (>=1.2)", "coverage[toml] (==7.6.10)", "flake8 (==7.0.0)", "flake8-bugbear (==24.12.12)", "flit (==3.10.1)", "mypy (==1.14.1)", "ufmt (==2.5.1)", "usort (==1.0.8.post1)"]
+docs = ["sphinx (==8.1.3)", "sphinx-mdinclude (==0.6.1)"]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 description = "Reusable constraint types to use with typing.Annotated"
@@ -2064,19 +2083,19 @@ langchain-core = ">=0.3.75,<2.0.0"
 
 [[package]]
 name = "langgraph"
-version = "0.6.7"
+version = "0.6.11"
 description = "Building stateful, multi-actor applications with LLMs"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "langgraph-0.6.7-py3-none-any.whl", hash = "sha256:c724dd8c24806b70faf4903e8e20c0234f8c0a356e0e96a88035cbecca9df2cf"},
-    {file = "langgraph-0.6.7.tar.gz", hash = "sha256:ba7fd17b8220142d6a4269b6038f2b3dcbcef42cd5ecf4a4c8d9b60b010830a6"},
+    {file = "langgraph-0.6.11-py3-none-any.whl", hash = "sha256:49268de69d85b7db3da9e2ca582a474516421c1c44be5cff390416cfa6967faa"},
+    {file = "langgraph-0.6.11.tar.gz", hash = "sha256:cd5373d0a59701ab39c9f8af33a33c5704553de815318387fa7f240511e0efd7"},
 ]
 
 [package.dependencies]
 langchain-core = ">=0.1"
-langgraph-checkpoint = ">=2.1.0,<3.0.0"
+langgraph-checkpoint = ">=2.1.0,<4.0.0"
 langgraph-prebuilt = ">=0.6.0,<0.7.0"
 langgraph-sdk = ">=0.2.2,<0.3.0"
 pydantic = ">=2.7.4"
@@ -2084,14 +2103,14 @@ xxhash = ">=3.5.0"
 
 [[package]]
 name = "langgraph-checkpoint"
-version = "2.1.1"
+version = "3.0.0"
 description = "Library with base interfaces for LangGraph checkpoint savers."
 optional = false
-python-versions = ">=3.9"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "langgraph_checkpoint-2.1.1-py3-none-any.whl", hash = "sha256:5a779134fd28134a9a83d078be4450bbf0e0c79fdf5e992549658899e6fc5ea7"},
-    {file = "langgraph_checkpoint-2.1.1.tar.gz", hash = "sha256:72038c0f9e22260cb9bff1f3ebe5eb06d940b7ee5c1e4765019269d4f21cf92d"},
+    {file = "langgraph_checkpoint-3.0.0-py3-none-any.whl", hash = "sha256:560beb83e629784ab689212a3d60834fb3196b4bbe1d6ac18e5cad5d85d46010"},
+    {file = "langgraph_checkpoint-3.0.0.tar.gz", hash = "sha256:f738695ad938878d8f4775d907d9629e9fcd345b1950196effb08f088c52369e"},
 ]
 
 [package.dependencies]
@@ -2099,20 +2118,37 @@ langchain-core = ">=0.2.38"
 ormsgpack = ">=1.10.0"
 
 [[package]]
+name = "langgraph-checkpoint-sqlite"
+version = "3.0.0"
+description = "Library with a SQLite implementation of LangGraph checkpoint saver."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "langgraph_checkpoint_sqlite-3.0.0-py3-none-any.whl", hash = "sha256:219c8ab974a69954fde7e3aa3cc2112f58b8fe5e1449293b32b344fa2dee110d"},
+    {file = "langgraph_checkpoint_sqlite-3.0.0.tar.gz", hash = "sha256:1b190ca6b4fd2bf70c0310896fd4240200ff54d3ee9b5ab7e7c05edfc824df72"},
+]
+
+[package.dependencies]
+aiosqlite = ">=0.20"
+langgraph-checkpoint = ">=3,<4.0.0"
+sqlite-vec = ">=0.1.6"
+
+[[package]]
 name = "langgraph-prebuilt"
-version = "0.6.4"
+version = "0.6.5"
 description = "Library with high-level APIs for creating and executing LangGraph agents and tools."
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "langgraph_prebuilt-0.6.4-py3-none-any.whl", hash = "sha256:819f31d88b84cb2729ff1b79db2d51e9506b8fb7aaacfc0d359d4fe16e717344"},
-    {file = "langgraph_prebuilt-0.6.4.tar.gz", hash = "sha256:e9e53b906ee5df46541d1dc5303239e815d3ec551e52bb03dd6463acc79ec28f"},
+    {file = "langgraph_prebuilt-0.6.5-py3-none-any.whl", hash = "sha256:b6ceb5db31c16a30a3ee3c0b923667f02e7c9e27852621abf9d5bd5603534141"},
+    {file = "langgraph_prebuilt-0.6.5.tar.gz", hash = "sha256:9c63e9e867e62b345805fd1e8ea5c2df5cc112e939d714f277af84f2afe5950d"},
 ]
 
 [package.dependencies]
 langchain-core = ">=0.3.67"
-langgraph-checkpoint = ">=2.1.0,<3.0.0"
+langgraph-checkpoint = ">=2.1.0,<4.0.0"
 
 [[package]]
 name = "langgraph-sdk"
@@ -5281,6 +5317,21 @@ pymysql = ["pymysql"]
 sqlcipher = ["sqlcipher3_binary"]
 
 [[package]]
+name = "sqlite-vec"
+version = "0.1.6"
+description = ""
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "sqlite_vec-0.1.6-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:77491bcaa6d496f2acb5cc0d0ff0b8964434f141523c121e313f9a7d8088dee3"},
+    {file = "sqlite_vec-0.1.6-py3-none-macosx_11_0_arm64.whl", hash = "sha256:fdca35f7ee3243668a055255d4dee4dea7eed5a06da8cad409f89facf4595361"},
+    {file = "sqlite_vec-0.1.6-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7b0519d9cd96164cd2e08e8eed225197f9cd2f0be82cb04567692a0a4be02da3"},
+    {file = "sqlite_vec-0.1.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:823b0493add80d7fe82ab0fe25df7c0703f4752941aee1c7b2b02cec9656cb24"},
+    {file = "sqlite_vec-0.1.6-py3-none-win_amd64.whl", hash = "sha256:c65bcfd90fa2f41f9000052bcb8bb75d38240b2dae49225389eca6c3136d3f0c"},
+]
+
+[[package]]
 name = "starlette"
 version = "0.47.3"
 description = "The little ASGI library that shines."
@@ -6218,4 +6269,4 @@ cffi = ["cffi (>=1.17) ; python_version >= \"3.13\" and platform_python_implemen
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "69c5746577300b1e6b2f3c028f550d3a5b13dcb41c6334508edf821fd55964f3"
+content-hash = "f2a192e44664e8759aa5c434149e79ad62c3d193ed8336a81bada65e6f02e2f0"

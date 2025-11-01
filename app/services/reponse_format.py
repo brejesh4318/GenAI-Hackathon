@@ -25,8 +25,7 @@ class AgentFormat(BaseModel):
     next_action: str
     summary:  str
     scratchpad: dict
-    notes: str
-    user_interrupt: Optional[str] = None
+    user_interrupt: Optional[str]
 
 
 class FinalOutput(BaseModel):
