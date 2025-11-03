@@ -3,12 +3,13 @@ from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.singletons_factory import DcSingleton
 
+API_KEY = None
 class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-flash-latest",
             temperature=temperature,
-            api_key=None,
+            # google_api_key=API_KEY,
             
         )
 
@@ -50,9 +51,9 @@ class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
 class Gemini25FlashLiteLLM(LLMInterface, metaclass=DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash-lite",
+            model="gemini-flash-latest",
             temperature=temperature,
-            api_key=None
+            google_api_key=API_KEY
         )
 
     def get_llm(self) -> "Gemini25FlashLiteLLM":

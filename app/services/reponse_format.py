@@ -20,6 +20,14 @@ class TestCase(BaseModel):
     compliance_reference_requirement_text: Optional[str] = Field(None, description="The specific requirement text from the compliance standard that applies to this test case, if relevant. Leave empty if not applicable.")
 
 
+class AgentFormat(BaseModel):
+    status: str
+    next_action: str
+    summary:  str
+    scratchpad: dict
+    user_interrupt: Optional[str]
+
+
 class FinalOutput(BaseModel):
     test_cases: List[TestCase]
 

@@ -2,12 +2,15 @@
 
 from datetime import datetime
 from pathlib import Path
+from app.services.llm_services.graph_state import PipelineState
 from app.services.llm_services.llm_interface import LLMInterface
+from app.services.prompt_fetch import PromptFetcher
+from app.services.reponse_format import AgentFormat
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from langchain.output_parsers import PydanticOutputParser
 from app.utilities.singletons_factory import DcSingleton
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
 import PyPDF2
 import docx  # for .docx
 import markdown  # for .md
@@ -16,8 +19,10 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 from langchain_core.exceptions import OutputParserException
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
-
-
+fetch_prompt = PromptFetcher()
+brain_agent_prompt = fetch_prompt.fetch("spec2test-brain-agent")
+compiance_reacher_prompt = fetch_prompt.fetch("compliance-researcher-agent")
+context_agent_prompt = fetch_prompt.fetch("context-builder-agent")
 class Helper(metaclass = DcSingleton):
     @staticmethod
     def read_file(file_path: str) -> str:
@@ -126,9 +131,9 @@ class Helper(metaclass = DcSingleton):
             llm_with_tools.invoke(
                 [
                     SystemMessage(
-                        content= Constants.fetch_constant("prompts")["compliance_agent2"]
+                        content= compiance_reacher_prompt
                     )
-                ] + ["Compliance Plan: " + state["compliance_plan"]]
+                ] + ["Document Information: " + state["document"]]
                 + state["messages"]
             )
         ],
@@ -164,12 +169,31 @@ class Helper(metaclass = DcSingleton):
             return f"{minutes} minute{'s' if minutes != 1 else ''}"
         else:
             return f"{seconds} second{'s' if seconds != 1 else ''}"
-
-
-
-
-
-
+    @staticmethod
+    def brain_agent(llm_tools:LLMInterface , state: PipelineState, output_parser: PydanticOutputParser)->AgentFormat:
+        try:
+            system_prompt = SystemMessage(content=brain_agent_prompt)
+            message = [system_prompt] + [state["brain_agent_message"]]
+            message += [f"here is your scratchpad {state['brain_agent_scratchpad']}"] if state.get("brain_agent_scratchpad") else []
+            # message += [f"here are your notes {state['notes']}"] if state.get("notes") else []
+            message += [f"here is your previous status {state['status']}"] if state.get("status") else []
+            message += [f"here is your previous next action {state['next_action']}"] if state.get("next_action") else []
+            message += [f"here is your previous summary {state['summary']}"] if state.get("summary") else []
+            response = llm_tools.generate(message)
+            logger.info("LLM Brain Agent Completed")
+            response = output_parser.parse(response)
+            return response
+        except Exception as e:
+            logger.error(f"Error in brain agent: {str(e)}")
+            raise e
+        
+    @staticmethod
+    def context_builder( llm: LLMInterface, state: PipelineState):
+        system_prompt= SystemMessage(content=context_agent_prompt)
+        response = llm.get_llm().invoke([system_prompt] + [f'Here is the document: {state["document"]}'])
+        logger.info("LLM Context Builder Completed")
+        return  response.content
+    
 def _read_docx(file_path: str) -> str:
     doc = docx.Document(file_path)
     return "\n".join([para.text for para in doc.paragraphs])
