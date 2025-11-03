@@ -22,6 +22,7 @@ logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"
 fetch_prompt = PromptFetcher()
 brain_agent_prompt = fetch_prompt.fetch("spec2test-brain-agent")
 compiance_reacher_prompt = fetch_prompt.fetch("compliance-researcher-agent")
+context_agent_prompt = fetch_prompt.fetch("context-builder-agent")
 class Helper(metaclass = DcSingleton):
     @staticmethod
     def read_file(file_path: str) -> str:
@@ -188,8 +189,7 @@ class Helper(metaclass = DcSingleton):
         
     @staticmethod
     def context_builder( llm: LLMInterface, state: PipelineState):
-        prompt = Constants.fetch_constant("prompts")["context_agent"] 
-        system_prompt= SystemMessage(content=prompt)
+        system_prompt= SystemMessage(content=context_agent_prompt)
         response = llm.get_llm().invoke([system_prompt] + [f'Here is the document: {state["document"]}'])
         logger.info("LLM Context Builder Completed")
         return  response.content
