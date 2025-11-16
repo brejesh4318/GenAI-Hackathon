@@ -197,7 +197,7 @@ class GraphPipe(metaclass=DcSingleton):
         logger.debug(f"Generated test cases: {testcases_details}")
         state["test_cases_lv1"] = testcases_details
         state["brain_agent_message"] = f"Initial test case generation completed test cases and test cases are {testcases_details}"
-        return state
+        return state #TODO change this return
 
     def test_case_validator(self, state: PipelineState):
         logger.info("Validating and refining test cases")

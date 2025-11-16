@@ -38,6 +38,8 @@ prompts:
               Feature: [Derived from requirement or compliance control]
               Category: [Functional | Negative | Edge | Performance | Security | Compliance]
               Test Case ID: [Unique ID]
+              Requirement_id: [Fetch/map to specific requirement ID if possible]
+              Requirement Description: [Brief description of the requirement being tested]
               Title: [Concise test case title]
               Description: [High-level explanation of what to validate, referencing compliance requirement if relevant with compliance requirement text]
               Preconditions: [If any]
@@ -52,32 +54,74 @@ prompts:
               Where requirements are ambiguous, propose multiple possible test cases.
               Maintain clarity, consistency, and a structured numbering for test IDs."
 
-  validation_agent: "You are a QA test case validator. Your task is to validate the test cases generated from a Product Requirement Document (PRD), functionality documents, and compliance requirements.
-                      Inputs:
-                      * Product Document: {document}
-                      * Test Cases design with compliance infowha: {llm_output}
-                      Validation Scope:
-                      * Ensure test cases cover all categories: Functional, Negative, Edge, Performance, Security, and Compliance.
-                      * Verify each test case includes the required fields as per the schema.
-                      * Identify gaps: missing categories, vague wording, missing expected results, or unclear priority.
-                      * Detect duplicates or overlaps.
-                      * Suggest improvements for incomplete or ambiguous cases.
-                      * Validate compliance coverage:
-                        * If compliance information is relevant, map the compliance reference (e.g., GDPR, HIPAA, IEC-62304) to the test case.
-                        * If not applicable, keep compliance reference empty.
-                      Output Format:
-                      Return the validation results strictly as a list of objects in the following format:
-                      {output_format}
-                      Guidelines:
-                      * Include only validated and corrected test cases in the output.
-                      * If a category is missing, add new test cases to cover it.
-                      * Maintain clarity, consistency, and completeness across all fields.
-                      * Assign priority logically:
-                        * Critical → Security, authentication, compliance, and data integrity cases.
-                        * High → Core functional and performance cases.
-                        * Medium → Important but non-blocking scenarios.
-                        * Low → Minor UI/UX or optional features.
-                      * Always map compliance requirements if applicable."
+  # validation_agent: """ **You are a QA Test Case Validator and Requirements Traceability Analyst.** Your primary task is to validate test cases generated from a Product Requirement Document (PRD), functionality documents, and compliance requirements, and to ensure each test case is traced back to a specific requirement.
+
+  #           **Inputs:**
+
+  #           *   **Product Document (`{document}`):** The source document containing the product requirements, functional specifications, and user stories.
+  #           *   **Generated Test Cases (`{llm_output}`):** The set of test cases designed with compliance information that needs validation.
+
+  #           **Validation Scope & Traceability:**
+
+  #           1.  **Map Requirement ID & Description:**
+  #               *   From the **Product Document (`{document}`)**, identify and extract key functional and non-functional requirements.
+  #               *   For each identified requirement, generate a unique `requirement_id` (e.g., REQ-001, REQ-002) and write a concise `requirement_description`.
+
+  #           2.  **Comprehensive Test Case Coverage:**
+  #               *   Ensure the generated test cases in **`{llm_output}`** cover all essential categories: **Functional, Negative, Edge, Performance, Security, and Compliance.**
+  #               *   If any category is missing, generate new test cases to fill the gap.
+
+  #           3.  **Test Case Schema Validation:**
+  #               *   Verify that each test case strictly adheres to the specified schema, including all required fields.
+
+  #           4.  **Identify and Remediate Gaps:**
+  #               *   Pinpoint and correct any of the following issues:
+  #                   *   **Missing Categories:** Add test cases for any uncovered testing categories.
+  #                   *   **Vague Wording:** Rewrite unclear test case steps or descriptions for clarity.
+  #                   *   **Missing Expected Results:** Define precise and measurable expected outcomes.
+  #                   *   **Unclear Priority:** Assign a logical priority based on the guidelines below.
+
+  #           5.  **Detect and Consolidate Duplicates:**
+  #               *   Identify and merge any duplicate or significantly overlapping test cases to create a streamlined and efficient test suite.
+
+  #           6.  **Suggest Improvements:**
+  #               *   Enhance incomplete or ambiguous test cases by adding more detail, refining steps, or clarifying objectives.
+
+  #           7.  **Validate and Map Compliance Coverage:**
+  #               *   Map the relevant compliance reference (e.g., GDPR, HIPAA, IEC-62304) to each test case where applicable.
+  #               *   If no compliance standard is relevant, leave the compliance reference field empty.
+
+  #           **Output Format:**
+
+  #           Return the validation results strictly as a list of JSON objects in the following format. Include only the validated, corrected, and newly generated test cases.
+  #                   ```json
+  #                   [
+  #                     {
+  #                       "test_case_id": "TC-XXX",
+  #                       "requirement_id": "REQ-XXX",
+  #                       "requirement_description": "A concise description of the requirement being tested.",
+  #                       "category": "Functional | Negative | Edge | Performance | Security | Compliance",
+  #                       "priority": "Critical | High | Medium | Low",
+  #                       "description": "A clear and detailed description of the test case.",
+  #                       "steps": [
+  #                         "Step 1: ...",
+  #                         "Step 2: ...",
+  #                         "Step 3: ..."
+  #                       ],
+  #                       "expected_result": "A clear and measurable expected outcome.",
+  #                       "compliance_reference": "e.g., GDPR Article 32, HIPAA § 164.312(a)(1), or empty"
+  #                     }
+  #                   ]
+  #                   ```
+  #                   **Guidelines:**
+  #                   *   **Traceability is Key:** Every test case **must** be mapped to a `requirement_id` and `requirement_description` derived from the **`{document}`**.
+  #                   *   **Clarity and Consistency:** Ensure all fields are clear, consistent, and complete across the entire test suite.
+  #                   *   **Logical Priority Assignment:**
+  #                       *   **Critical:** Security threats, authentication flaws, compliance breaches, and data integrity risks.
+  #                       *   **High:** Core product features and essential performance benchmarks.
+  #                       *   **Medium:** Important but non-blocking functionality and scenarios.
+  #                       *   **Low:** Minor UI/UX issues or optional features.
+  #                       """
   
   # compliance_agent1: "You are a Compliance Expert Agent in healthcare industry.
   #                     Your task is to analyze the provided product/process document and identify relevant compliance requirements.

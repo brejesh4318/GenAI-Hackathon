@@ -9,8 +9,10 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File
 from typing import List, Optional
 from fastapi.responses import JSONResponse, StreamingResponse
-# from jose import JWTError, jwt
-# from passlib.context import CryptContext
+from requests.auth import HTTPBasicAuth
+import httpx
+from httpx import BasicAuth
+
 from datetime import datetime
 from app.routers.datamodel import ProjectCreateRequest
 from app.services.testcase_generator import TestCaseGenerator
@@ -21,6 +23,7 @@ from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
 from app.services.llm_services.graph_pipeline import GraphPipe, memory
+from app.routers.datamodel import JiraPushRequest
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 router = APIRouter(
@@ -130,13 +133,6 @@ async def createProject(request: ProjectCreateRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
 
-@router.get("/listProjects")
-async def listProjects(): 
-    try:
-        pass
-    except:
-        pass
-
 @router.get("/getProjects")
 async def getProjects():
     try:
@@ -184,6 +180,7 @@ async def getTestCases(project_id: str):
             if testcases:
                 for testcase in testcases:
                     data = {
+                            "testUniqueID": str(testcase.get("_id", "")),
                             "testCaseId":testcase.get("test_case_id"),
                             "testCaseUniqueId": str(testcase["_id"]),
                             "priority": testcase.get("priority"),
@@ -220,6 +217,8 @@ async def getTestCaseDetail(testcase_id: str):
                     "featureModule": testcase["feature"],
                     "title": testcase["title"], 
                     "type": testcase["type"],
+                    "reqId": testcase["requirement_id"],
+                    "reqDesc": testcase["requirement_description"],
                     "priority": testcase["priority"],
                     "status": "active",
                     "preconditions": testcase["preconditions"],
@@ -458,3 +457,113 @@ async def export_test_cases(project_id: str):
             status_code=500,
             detail={"status": "Failed", "message": str(exe)}
         )
+
+@router.post("/jiraPush")
+async def push_jira(request: JiraPushRequest):
+    """
+    Push selected test cases from MongoDB to Jira (bulk mode with batching).
+    Each test case is fetched from the database and formatted before sending.
+    """
+    try:
+        test_case_ids = request.selected_ids
+        project_id = request.project_id
+        domain_name = request.domain_name
+        jira_api = request.jira_api
+        # Fetch project info
+        project_doc = mongo_client.read(project_collection, {"_id": ObjectId(project_id)})
+        if not project_doc:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        project_doc = project_doc[0]
+
+        # Jira API setup
+        jira_url = f"https://{domain_name}.atlassian.net/rest/api/3/issue/bulk"
+        auth = HTTPBasicAuth(request.jira_mail_id, jira_api)
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+        all_issues = []
+        logger.info("Fetching Test cases frm Db")
+        # Build issues payload for each test case
+        for test_case_id in test_case_ids:
+            test_case = mongo_client.read(testcase_collection, {"_id": ObjectId(test_case_id)})
+            if not test_case:
+                continue  # skip if not found
+            test_case = test_case[0]
+
+            description_blocks = []
+            def add_block(label, value):
+                """Helper to format rich text paragraphs"""
+                if value:
+                    if isinstance(value, list):
+                        content_text = "\n".join(value)
+                    elif isinstance(value, dict):
+                        content_text = "\n".join(f"{k}: {v}" for k, v in value.items())
+                    else:
+                        content_text = str(value)
+                    description_blocks.append({
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": f"{label}: {content_text}"}]
+                    })
+
+            add_block("Feature", test_case.get("feature"))
+            add_block("Type", test_case.get("type"))
+            add_block("Priority", test_case.get("priority"))
+            add_block("Preconditions", test_case.get("preconditions"))
+            add_block("Test Data", test_case.get("test_data"))
+            add_block("Steps", test_case.get("steps"))
+            add_block("Expected Result", test_case.get("expected_result"))
+            add_block("Postconditions", test_case.get("postconditions"))
+            add_block("Compliance Ref Standard", test_case.get("compliance_reference_standard"))
+            add_block("Compliance Ref Clause", test_case.get("compliance_reference_clause"))
+            add_block("Compliance Ref Requirement", test_case.get("compliance_reference_requirement_text"))
+
+            issue = {
+                "fields": {
+                    "project": {"key": project_doc.get("project_key", "HS")},  # fallback project key
+                    "summary": test_case.get("title", "Untitled Test Case"),
+                    "issuetype": {"name": "Task"},
+                    "description": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": description_blocks or [{
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "No description provided"}]
+                        }],
+                    },
+                    "labels": ["spec2test", "auto-generated"],
+                }
+            }
+
+            all_issues.append(issue)
+
+        BATCH_SIZE = 45
+        created_issues = []
+        logger.info("Pushing Test cases to jira")
+        for i in range(0, len(all_issues), BATCH_SIZE):
+            batch = all_issues[i:i+BATCH_SIZE]
+            payload = {"issueUpdates": batch}
+            logger.info(f"Pushing test cases batch to Jira batch size: {len(batch)}")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    jira_url,
+                    json=payload,
+                    headers=headers,
+                    auth=BasicAuth("fundauraap@gmail.com", jira_api),
+                    timeout=30.0,
+                )
+
+            if response.status_code not in (200, 201):
+                raise HTTPException(status_code=response.status_code, detail=response.text)
+
+            created_issues.extend(response.json().get("issues", []))
+
+            # 🕐 Respect Jira API rate limits (1 request/sec safe zone)
+            await asyncio.sleep(1)
+
+        return {
+            "status": "success",
+            "total_pushed": len(created_issues),
+            "created_issues": created_issues,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
