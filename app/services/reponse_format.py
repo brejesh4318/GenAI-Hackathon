@@ -10,6 +10,8 @@ class TestCase(BaseModel):
     title: str = Field(..., description="Short description of the test case")
     type: str = Field(..., description="Type of test case: Positive, Negative, Edge")
     priority: str = Field(..., description="Priority of the test case: High, Medium, Low")
+    requirement_id: Optional[List[str]] = Field(None, description="list of Requirement IDs generated ")
+    requirement_description: str = Field(..., description="Brief description of the requirement being tested")
     preconditions: Optional[List[str]] = Field(default_factory=list, description="Conditions required before execution")
     test_data: Optional[Dict[str, str]] = Field(default_factory=dict, description="Input data required for test case")
     steps: List[str] = Field(..., description="Step-by-step instructions to execute the test")

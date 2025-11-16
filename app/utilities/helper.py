@@ -21,8 +21,9 @@ from langchain_core.exceptions import OutputParserException
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 fetch_prompt = PromptFetcher()
 brain_agent_prompt = fetch_prompt.fetch("spec2test-brain-agent")
-compiance_reacher_prompt = fetch_prompt.fetch("compliance-researcher-agent")
+compliance_researcher_prompt = fetch_prompt.fetch("compliance-researcher-agent")
 context_agent_prompt = fetch_prompt.fetch("context-builder-agent")
+validation_agent_prompt = fetch_prompt.fetch("validator-agent")
 class Helper(metaclass = DcSingleton):
     @staticmethod
     def read_file(file_path: str) -> str:
@@ -93,7 +94,7 @@ class Helper(metaclass = DcSingleton):
         Validate test cases with LLM and enforce structured format.
         Retries parsing if OutputParserException occurs (max 2 attempts, 2 sec delay).
         """
-        prompt = Constants.fetch_constant("prompts")["validation_agent"].format(
+        prompt = validation_agent_prompt.format(
             document=document,
             llm_output=llm_output,
             output_format=output_parser.get_format_instructions()
@@ -131,7 +132,7 @@ class Helper(metaclass = DcSingleton):
             llm_with_tools.invoke(
                 [
                     SystemMessage(
-                        content= compiance_reacher_prompt
+                        content= compliance_researcher_prompt
                     )
                 ] + ["Document Information: " + state["document"]]
                 + state["messages"]
@@ -169,6 +170,7 @@ class Helper(metaclass = DcSingleton):
             return f"{minutes} minute{'s' if minutes != 1 else ''}"
         else:
             return f"{seconds} second{'s' if seconds != 1 else ''}"
+
     @staticmethod
     def brain_agent(llm_tools:LLMInterface , state: PipelineState, output_parser: PydanticOutputParser)->AgentFormat:
         try:
@@ -176,9 +178,9 @@ class Helper(metaclass = DcSingleton):
             message = [system_prompt] + [state["brain_agent_message"]]
             message += [f"here is your scratchpad {state['brain_agent_scratchpad']}"] if state.get("brain_agent_scratchpad") else []
             # message += [f"here are your notes {state['notes']}"] if state.get("notes") else []
-            message += [f"here is your previous status {state['status']}"] if state.get("status") else []
-            message += [f"here is your previous next action {state['next_action']}"] if state.get("next_action") else []
-            message += [f"here is your previous summary {state['summary']}"] if state.get("summary") else []
+            message += [f"\nhere is your previous status {state['status']}"] if state.get("status") else []
+            message += [f"\nhere is your previous next action {state['next_action']}"] if state.get("next_action") else []
+            message += [f"\nhere is your previous summary {state['summary']}"] if state.get("summary") else []
             response = llm_tools.generate(message)
             logger.info("LLM Brain Agent Completed")
             response = output_parser.parse(response)

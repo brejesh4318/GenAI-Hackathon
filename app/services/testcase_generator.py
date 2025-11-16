@@ -31,7 +31,7 @@ class TestCaseGenerator(metaclass = DcSingleton):
                 prompt = response["__interrupt__"][-1].value
                 # last_msg = response["messages"][-1].content
                 # user_input = input(f"{last_msg}\n\n{prompt}\n\nYour Input: ")
-                return {"response": f"{prompt}", "type": "interrupt"}
+                return {"response": f"{response.get("test_cases_lv1")}\n{prompt}", "type": "interrupt"}
             else:
                 if "test_cases_final" not in response:
                     raise ValueError("test_cases_final not found in response")
