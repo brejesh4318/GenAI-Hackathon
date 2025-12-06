@@ -1,26 +1,32 @@
 import operator
 from typing import Annotated, TypedDict, List, Dict, Optional
 from langchain_core.messages import AnyMessage
+from langgraph.graph import add_messages
 
 
-class PipelineState(TypedDict):
-    messages_key: str
-    status: str
-    user_interrupt: str
-    next_action: str
-    summary: str
-    scratchpad: dict
-    notes: str
-    file_path: str
+class AgentState(TypedDict):
+    """
+    Represents the state of the agentic workflow.
+    Integrates new architecture with existing system compatibility.
+    """
+    user_request: str
+    file_path: list[str]
     document: str
-    test_cases_lv1: str
-    test_cases_final: dict
-    compliance_plan: str
-    brain_agent_message: str
-    brain_agent_action: str
-    brain_agent_scratchpad: dict
-    context_builder_messages: Annotated[list[AnyMessage], operator.add]
-    messages: Annotated[list[AnyMessage], operator.add]
+    images: List[str]
+    context: str
+    context_summary: Optional[str]
+    context_built: bool
+    test_cases: List[dict]
+    test_cases_lv1: Optional[str]
+    test_cases_summary: Optional[str]
+    test_cases_status: Optional[str]
+    validation_status: Optional[str]
+    next_node: Optional[str]
+    context_agent_messages: Annotated[List[AnyMessage], add_messages]
+
+
+# Backward compatibility aliases
+PipelineState = AgentState
 
 
 class ComplianceState(TypedDict, total=False):

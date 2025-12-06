@@ -237,30 +237,6 @@ async def getTestCaseDetail(testcase_id: str):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
 
-# @router.get("/compliancePage")
-# def getCompliancePage():
-#     try:
-#         total_test_cases_generated = 0
-#         compliance_test_cases= 0
-#         compliance_coverage = 0
-#         test_saved = 0
-#         test_cases_standards = {}
-#         testcases = mongo_client.read("testcases", {})
-#         compliance_data = []
-#         if testcases:
-#             total_test_cases_generated = len(testcases)
-#             for testcase in testcases:
-#                 if testcase["compliance_reference_standard"]:
-#                     data = {"project_id": str(testcase["project_id"]),
-#                             "standard": testcase["compliance_reference_standard"],
-#                             "clause": testcase["compliance_reference_clause"],
-#                             "requirement": testcase["compliance_reference_clause"],
-#                             "linkedTestCases":}
-#             compliance_coverage = (compliance_test_cases / len(testcases) * 100)
-#             test_saved = round((len(testcases) * 5) / 60, 2)  # convert minutes to hours, rounded to 2 decimals
-#     except:
-#         pass
-
 @router.post("/testcaseGenerator/{request_type}")
 async def generate_testcases(
     request: Request,
@@ -392,8 +368,8 @@ async def upload_file(file: UploadFile = File(...)):
         # Save the uploaded file
         path = Helper.save_file("/tmp", content=content, filename=filename)
         logger.info(f"Saved uploaded file to: {path}")
-        file_content = Helper.read_file(file_path=path)
-        logger.info(f"Read file content: {len(file_content.split())} words")
+        file_content, images = Helper.read_file(file_path=path)
+        logger.info(f"Read file content: {len(file_content.split())} words, {len(images)} images")
         return {"status": "success", "file_path": path}
     except Exception as e:
         logger.error(f"Failed to upload file: {str(e)}")
@@ -556,7 +532,7 @@ async def push_jira(request: JiraPushRequest):
 
             created_issues.extend(response.json().get("issues", []))
 
-            # 🕐 Respect Jira API rate limits (1 request/sec safe zone)
+            # Respect Jira API rate limits (1 request/sec safe zone)
             await asyncio.sleep(1)
 
         return {

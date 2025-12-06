@@ -2,6 +2,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from app.services.llm_services.llm_interface import LLMInterface
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.singletons_factory import DcSingleton
+from langchain_core.language_models.chat_models import BaseChatModel
+
 
 API_KEY = None
 class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
@@ -10,10 +12,9 @@ class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
             model="gemini-flash-latest",
             temperature=temperature,
             # google_api_key=API_KEY,
-            
         )
 
-    def get_llm(self) -> "Gemini25FlashLLM":
+    def get_llm(self) -> BaseChatModel:
         """
         Static method to get an instance of Gemini25FlashLLM.
 
