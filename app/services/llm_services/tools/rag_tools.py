@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_google_community.vertex_rank import VertexAIRank
 from langchain_tavily import TavilySearch
+from langgraph.types import interrupt
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from app.utilities import dc_logger
 from app.utilities.env_util import EnvironmentVariableRetriever
@@ -124,3 +125,18 @@ def web_search_tool(top_k: int = 5) -> List[Dict[str, Any]]:
     Performs a web search using TavilySearch and returns the top_k results.
     """
     return TavilySearch(max_results=top_k)
+
+
+@tool
+def interrupt_tool(prompt: str) -> str:
+    """
+    A tool to signal an interrupt in the workflow for human input.
+    
+    Args:
+        prompt (str): The message to display to the user.
+    Returns:
+        str: Confirmation message.
+    """
+    logger.info(f"Interrupt tool called with prompt: {prompt}")
+    user_message = interrupt(prompt)
+    return f"Workflow interrupted for human input: {user_message}"

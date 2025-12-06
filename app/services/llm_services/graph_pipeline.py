@@ -2,210 +2,341 @@ import uuid
 import json
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode
 from langchain.output_parsers import PydanticOutputParser
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, HumanMessage, SystemMessage
 from langchain_core.messages import AnyMessage
 from langgraph.types import interrupt, Command
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.services.prompt_fetch import PromptFetcher
 from app.utilities import dc_logger
 from app.utilities.helper import Helper
+from app.utilities.constants import Constants
+from app.utilities.document_parser import DocumentParser
 from app.services.llm_services.llm_interface import LLMInterface 
 from app.services.reponse_format import AgentFormat, FinalOutput
 from app.utilities.singletons_factory import DcSingleton
-from app.services.llm_services.graph_state import PipelineState 
-from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.memory import InMemorySaver
+from app.services.llm_services.graph_state import AgentState, PipelineState
+from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from langchain_core.exceptions import OutputParserException
 import sqlite3
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 conn = sqlite3.connect('langchain.db', check_same_thread=False)
 memory = SqliteSaver(conn)
+parser = DocumentParser()
+fetch_prompt = PromptFetcher()
+# Fetch prompts from Langfuse with production labels
+validation_agent_prompt = fetch_prompt.fetch("validator-agent")
+test_case_generator_prompt = fetch_prompt.fetch("test-case-generator")
 
 
 class GraphPipe(metaclass=DcSingleton):
 
-    def __init__(self, llm: LLMInterface,  llm_tools: LLMInterface) :
-        logger.info("Initializing GraphPipe")
+    def __init__(self, llm: LLMInterface, llm_tools: LLMInterface):
+        logger.info("Initializing GraphPipe with new agentic architecture")
         self.llm = llm
         self.llm_tools = llm_tools
         self.output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
         self.brain_output_parser = PydanticOutputParser(pydantic_object=AgentFormat)
         self.tools = []
         self.bind_tools()
-        self.graph = self.compile_graph() # Graph compilation is synchronous
+        self.graph = self.compile_graph()  # Graph compilation is synchronous
         logger.info("GraphPipe initialized successfully")
 
     def bind_tools(self):
+        """Bind all tools including interrupt, web search, and RAG tools"""
         logger.info("Binding tools to LLM")
         tavily = web_search_tool()
         self.tools.append(tavily)
         self.tools.append(retrieve_by_standards)
+        self.tools.append(interrupt_tool)
         llm = self.llm_tools.get_llm()
         self.llm_with_tools = llm.bind_tools(self.tools)
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         logger.info(f"Tools bound: {[tool.name for tool in self.tools]}")
 
     def compile_graph(self) -> CompiledStateGraph:
-        logger.info("Compiling workflow graph")
-        workflow_graph = StateGraph(PipelineState)
+        """Compile the workflow graph with new architecture"""
+        logger.info("Compiling workflow graph with new agentic architecture")
+        workflow_graph = StateGraph(AgentState)
 
-        # ---------- build graph: add nodes ----------
-        workflow_graph.set_entry_point("files_parser")
-        workflow_graph.add_node("files_parser", self.file_parser)
-        workflow_graph.add_node("context_agent",self.context_agent)
-        workflow_graph.add_node("brain_agent", self.brain_agent)
-        workflow_graph.add_node("interrupt_node", self.interrupt_node)
-        workflow_graph.add_node("compliance_research", self.compliance_reacher_agent)
-        workflow_graph.add_node("test_case_generator", self.test_case_generator)
-        workflow_graph.add_node("test_case_validator", self.test_case_validator)
-        # workflow_graph.add_node("test_case_file_generator", self.test_case_file_generator)
+        # Add nodes
+        logger.info("Adding nodes to workflow graph")
+        workflow_graph.add_node("file_parser", self.file_parser)
+        workflow_graph.add_node("brain", self.brain_node)
+        workflow_graph.add_node("context_builder", self.context_builder_node)
+        workflow_graph.add_node("tools", ToolNode([interrupt_tool], messages_key="context_agent_messages"))
+        workflow_graph.add_node("test_generator", self.test_generator_node)
+        workflow_graph.add_node("validator", self.validator_node)
 
-        workflow_graph.add_node("tool_node", self.tool_node)
-        workflow_graph.add_edge("files_parser", "context_agent")
-        workflow_graph.add_edge("context_agent", "brain_agent")
-        workflow_graph.add_conditional_edges("brain_agent", self.brain_router, {"compliance_research": "compliance_research", "test_case_generator": "test_case_generator", "interrupt_node": "interrupt_node", "test_case_validator": "test_case_validator"})
+        # Set entry point and define edges
+        logger.info("Setting entry point to 'file_parser' node")
+        workflow_graph.set_entry_point("file_parser")
+        workflow_graph.add_edge("file_parser", "brain")
 
-        workflow_graph.add_conditional_edges("compliance_research", self.should_continue, {"tool_node": "tool_node", "test_case_generator": "test_case_generator"})
-        workflow_graph.add_edge("tool_node", "compliance_research")
-        # connect nodes in execution order
-        workflow_graph.add_edge("test_case_generator", "brain_agent")
-        workflow_graph.add_edge("interrupt_node", "brain_agent")
-        # workflow_graph.add_edge("test_case_validator", "test_case_file_generator")
-        workflow_graph.add_edge("test_case_validator", END)
+        logger.info("Adding conditional edges for context_builder")
+        workflow_graph.add_conditional_edges(
+            "context_builder", 
+            self.context_router, 
+            {"tools": "tools", "brain": "brain", END: END}
+        )
+
+        logger.info("Adding conditional edges for brain node")
+        workflow_graph.add_conditional_edges(
+            "brain",
+            self.should_continue,
+            {
+                "context_builder": "context_builder",
+                "test_generator": "test_generator",
+                "validator": "validator",
+                END: END,
+            },
+        )
+
+        logger.info("Adding edges to route worker nodes back to brain")
+        workflow_graph.add_edge("tools", "context_builder")
+        workflow_graph.add_edge("test_generator", "brain")
+        workflow_graph.add_edge("validator", END)
+
+        # Compile with checkpointer
         workflow_graph = workflow_graph.compile(checkpointer=memory)
         logger.info("Workflow graph compiled successfully")
-        # png = workflow_graph.get_graph().draw_mermaid_png()
-        # with open("workflow_graph.png", "wb") as f:
-        #     f.write(png)
         return workflow_graph
-    
-    def invoke_graph(self, document_path, config) -> PipelineState:
+
+    # --- Routing Functions ---
+    def context_router(self, state: AgentState):
+        """Decide if we should continue the loop or stop based on tool calls"""
+        try:
+            messages_key = "context_agent_messages"
+            messages = state.get(messages_key, [])
+            logger.info(f"Context router invoked. Messages count: {len(messages) if messages else 0}")
+
+            if messages:
+                last_message = messages[-1]
+                if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
+                    logger.info("Tool call detected. Routing to 'tools' node.")
+                    return "tools"
+
+                logger.info("No tool call detected. Routing to 'brain' node.")
+                return "brain"
+            else:
+                logger.warning("No valid messages found, routing to brain.")
+                return "brain"
+        except Exception as e:
+            logger.error(f"Error in context router decision: {e}")
+            return "brain"
+
+    def should_continue(self, state: AgentState):
+        """Conditional routing logic that directs the workflow from the brain"""
+        next_node = state.get("next_node")
+        logger.info(f"should_continue invoked. Next node decision: {next_node}")
+        if next_node == "end" or not next_node:
+            logger.info("Workflow ending.")
+            return END
+        logger.info(f"Routing to next node: {next_node}")
+        return next_node
+
+    # --- Node Implementations ---
+    def file_parser(self, state: AgentState) -> AgentState:
+        """Parse input file and extract document content and images"""
+        logger.info(f"--- Executing File Parser Node ---")
+        file_paths = state.get("file_path", [])
+        
+        if file_paths:
+            file_path = file_paths[0] if isinstance(file_paths, list) else file_paths
+            logger.info(f"Parsing file: {file_path}")
+            md, images = parser.parse_file(file_path)
+            logger.info(f"Document parsed: {len(md.split())} words, {len(images)} images extracted")
+            return {
+                "document": md,
+                "images": images,
+                "file_path": [file_path]
+            }
+        else:
+            logger.warning("No file path provided in state")
+            return {"document": "", "images": []}
+
+    def brain_node(self, state: AgentState) -> AgentState:
+        """Orchestrator node that decides the next step based on current state"""
+        logger.info("--- Executing Brain Node ---")
+        
+        # Fetch brain orchestrator prompt from Langfuse
+        brain_prompt_template = fetch_prompt.fetch("brain-orchestrator-agent")
+        
+        user_request = state.get("user_request", "")
+        formatted_prompt = brain_prompt_template.format(
+            context_summary=state.get('context_summary', 'Not Completed'),
+            test_cases_summary=state.get('test_cases_summary', 'Not Completed'),
+            validation_status=state.get('validation_status', 'Not Completed'),
+            test_cases_status=state.get("test_cases_status", "Not Completed"),
+            context_built=state.get('context_built', False),
+            user_request=user_request
+        )
+        
+        llm = self.llm.get_llm()
+        next_node_decision = llm.invoke([HumanMessage(content=formatted_prompt)]).content.strip()
+        logger.info(f"Brain decided next node: {next_node_decision}")
+        
+        return {"next_node": next_node_decision}
+
+    def context_builder_node(self, state: AgentState) -> AgentState:
+        """Extracts initial context from user request and document"""
+        logger.info("--- Executing Context Builder Node ---")
+        user_request = state.get("user_request", "")
+        
+        if state.get("document"):
+            logger.info(f"Building context from document")
+            md = state["document"]
+            images = state.get("images", [])
+            
+            # Fetch context builder prompt from Langfuse
+            context_prompt = fetch_prompt.fetch("context-builder-agent")
+            system_prompt = SystemMessage(content=context_prompt)
+            
+            llm = self.llm.get_llm()
+            
+            if images:
+                logger.info(f"Found {len(images)} images in document. Building multimodal context.")
+                content_parts = [{"type": "text", "text": f'Here is the document: {md}'}]
+                for image_uri in images:
+                    content_parts.append({"type": "image_url", "image_url": image_uri})
+                human_message = HumanMessage(content=content_parts)
+                response = llm.invoke([system_prompt, human_message])
+            else:
+                logger.info("No images found. Building text-only context.")
+                response = llm.invoke([system_prompt, HumanMessage(content=f'Here is the document: {md}')])
+            
+            structured_context = response.content
+            context = [f"{user_request}\n\nStructured Document Context:\n{structured_context}"]
+            logger.info("Structured context built using LLM.")
+        else:
+            logger.info("No document provided. Using user request as context.")
+            context = [user_request]
+        
+        context_summary = self.summarize_text("\n".join(context))
+        logger.info("Context summary generated.")
+        
+        return {
+            "context": "\n".join(context),
+            "context_summary": context_summary,
+            "context_built": True
+        }
+
+    def test_generator_node(self, state: AgentState) -> AgentState:
+        """Generates new test cases based on the full context"""
+        logger.info("--- Executing Test Generator Node ---")
+        
+        if not state.get("context"):
+            logger.error("No context found. Cannot proceed with test case generation.")
+            raise Exception("No context found. Cannot proceed with test case generation.")
+        
+        full_context = state["context"]
+        compliance_info = ""  # TODO: Can be enhanced with RAG results
+        
+        prompt = test_case_generator_prompt.format(
+            document=full_context,
+            compliance_info=compliance_info
+        )
+        
+        human_message = HumanMessage(content=prompt)
+        llm = self.llm.get_llm()
+        
+        logger.info("Using context for LLM invocation for test case generation.")
+        llm_output = llm.invoke([human_message])
+        logger.info("LLM Test Case Generation Completed.")
+        
+        test_cases_summary = self.summarize_text(llm_output.content)
+        
+        return {
+            "test_cases_status": "test case generation completed",
+            "test_cases_lv1": llm_output.content,
+            "test_cases_summary": test_cases_summary
+        }
+
+    @retry(retry=retry_if_exception_type(OutputParserException), stop=stop_after_attempt(2), wait=wait_fixed(2))
+    def validator_node(self, state: AgentState) -> AgentState:
+        """Validates the structure and content of the generated test cases"""
+        logger.info("--- Executing Validator Node ---")
+        
+        document = state.get("context", "")
+        llm_output = state.get("test_cases_lv1", "")
+        
+        output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+        
+        prompt = validation_agent_prompt.format(
+            document=document,
+            llm_output=llm_output,
+            output_format=output_parser.get_format_instructions()
+        )
+        
+        llm = self.llm.get_llm()
+        validated_output = llm.invoke([HumanMessage(content=prompt)]).content
+        logger.info("LLM Test Case Validation Completed.")
+        
+        try:
+            parsed_output = output_parser.parse(validated_output)
+        except OutputParserException as e:
+            logger.error(f"Parsing failed: {e}. Retrying...")
+            raise e
+        
+        parsed = parsed_output.model_dump()
+        
+        # Extract test cases from parsed output
+        test_cases = parsed.get("test_cases", [])
+        test_cases_summary = f"{len(test_cases)} test cases validated."
+        validation_status = "Validation successful."
+        
+        return {
+            "test_cases": test_cases,
+            "test_cases_summary": test_cases_summary,
+            "validation_status": validation_status,
+            "test_cases_lv1": parsed  # Store final validated output
+        }
+
+    # --- Helper Methods ---
+    def summarize_text(self, text: str) -> str:
+        """Generates a summary for a given text using the LLM"""
+        if not text:
+            return ""
+        logger.info("Summarizing text")
+        prompt = [HumanMessage(content=f"Please summarize the following text concisely:\n\n{text}")]
+        llm = self.llm.get_llm()
+        summary = llm.invoke(prompt).content
+        return summary
+
+    # --- Graph Invocation Methods ---
+    def invoke_graph(self, document_path, config) -> AgentState:
+        """Invoke the graph with a document"""
         logger.info(f"Invoking graph with document_path: {document_path}")
-        result = self.graph.invoke({"file_path":document_path }, config=config)
+        result = self.graph.invoke(
+            {
+                "file_path": [document_path] if not isinstance(document_path, list) else document_path,
+                "user_request": "Generate comprehensive test cases",
+                "context": "",
+                "context_summary": None,
+                "context_built": False,
+                "test_cases": [],
+                "test_cases_lv1": None,
+                "test_cases_summary": None,
+                "test_cases_status": None,
+                "validation_status": None,
+                "next_node": "context_builder",
+                "context_agent_messages": [],
+                "document": "",
+                "images": []
+            },
+            config=config
+        )
         logger.info("Graph invocation completed")
         return result
     
-    def resume_graph(self, command, config) -> PipelineState:
+    def resume_graph(self, command, config) -> AgentState:
+        """Resume a paused graph execution"""
         logger.info(f"Resuming graph with command: {command}")
         result = self.graph.invoke(Command(resume=command), config=config)
         logger.info("Graph Resumption completed")
         return result
-
-    def file_parser(self, state: PipelineState):
-        logger.info(f"Parsing file: {state['file_path']}")
-        document = Helper.read_file(file_path=state["file_path"])
-        logger.info(f"Document parsed: {len(document.split())} words")
-        return {"document": document}
-
-
-
-    
-    # def compliance_planner_agent(self, state: dict):
-    #     logger.info("Running compliance planner agent")
-    #     result = Helper.plan_compliance(self.llm, process_document=state["document"])
-    #     logger.debug(f"Compliance plan result: {result}")
-    #     return result 
-
-    def tool_node(self, state: dict):
-        logger.info("Performing tool calls")
-        result = []
-        for tool_call in state["messages"][-1].tool_calls:
-            logger.info(f"Invoking tool: {tool_call['name']} with args: {tool_call['args']}")
-            tool = self.tools_by_name[tool_call["name"]]
-            observation = tool.invoke(tool_call["args"])
-            logger.debug(f"Tool {tool_call['name']} observation: {observation}")
-            result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
-        logger.info("Tool calls completed")
-        return {"messages": result}
-    
-    def should_continue(self, state: PipelineState):
-        messages = state["messages"]
-        last_message = messages[-1]
-        logger.info("Checking if should continue or end")
-        if last_message.tool_calls:
-            logger.info("Tool call detected, continuing to tool_node")
-            return "tool_node"
-        logger.info("No tool call detected, ending workflow")
-        return "test_case_generator"
-    
-    def brain_router(self, state: PipelineState):
-        next_action = state["next_action"]
-        logger.info(f"Checking if checking brain route or end for action {next_action}")
-        if next_action == "send_compliance_planner":
-            return "compliance_research"
-        elif next_action == "test_case_generate":
-            return "test_case_generator"
-        elif next_action == "user_interrupt":
-            return "interrupt_node"
-        elif next_action == "process_complete":
-            return "test_case_validator"
-        else:
-            logger.warning(f"Unknown next action: {next_action}, ending workflow")
-            return END
-
-
-
-    def brain_agent(self, state: PipelineState):
-        logger.info("Running brain agent")
-        result = Helper.brain_agent(self.llm_tools, state=state, output_parser=self.brain_output_parser)
-        state["status"] = result.status
-        state["next_action"] = result.next_action
-        state["summary"] = result.summary
-        state["scratchpad"] = result.scratchpad
-        if result.user_interrupt: 
-            state["user_interrupt"] = result.user_interrupt 
-        logger.debug(f"Brain agent result: {result}")
-        return state
-    
-    def context_agent(self, state: dict):
-        logger.info("Running context agent")
-        result = Helper.context_builder(self.llm, state=state)
-        logger.debug(f"Context agent result: {result}")
-        state["document"] = result
-        state["brain_agent_message"] = f"Context Generation is completed here is the context information {state["document"]}"
-        return state
-    
-    def interrupt_node(self, state: PipelineState):
-        logger.info("Running interrupt node")
-        user_messager = interrupt(state["user_interrupt"])
-        state["brain_agent_message"] = f"here is the user messages {user_messager} for the question asked {state['user_interrupt']}" 
-        state["user_interrupt"] = ""  # reset after processing
-        return state
-    
-    def compliance_reacher_agent(self, state: dict):
-        logger.info("Running compliance reacher agent")
-        result = Helper.compliance_answer(self.llm_with_tools, state=state)
-        logger.debug(f"Compliance answer result: {result}")
-        return result
-    
-
-    def test_case_file_generator(self, state: PipelineState):
-        logger.info("Saving final test cases to a JSON file")
-        filename = f"test_case_{uuid.uuid4().hex}.json"
-        with open(filename, "w") as f:
-            json.dump(state["test_cases_final"], f, indent=4)
-        logger.info(f"Test cases saved to {filename}")
-        return {"output_file": filename}
-    
-
-    def test_case_generator(self, state: PipelineState):
-        logger.info("Generating initial test cases from document")
-        testcases_details = Helper.generate_testcase(llm = self.llm, document=state["document"], compliance_info=state["messages"][-1].content)
-        logger.debug(f"Generated test cases: {testcases_details}")
-        state["test_cases_lv1"] = testcases_details
-        state["brain_agent_message"] = f"Initial test case generation completed test cases and test cases are {testcases_details}"
-        return state #TODO change this return
-
-    def test_case_validator(self, state: PipelineState):
-        logger.info("Validating and refining test cases")
-        testcases_details = Helper.validator(
-            llm=self.llm_tools,
-            document=state["document"],
-            llm_output=state["test_cases_lv1"],
-            output_parser=self.output_parser
-        )
-        logger.debug(f"Validated test cases: {testcases_details}")
-        return {"test_cases_final": testcases_details}
