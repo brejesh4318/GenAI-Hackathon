@@ -14,12 +14,14 @@ import httpx
 from httpx import BasicAuth
 
 from datetime import datetime
-from app.routers.datamodel import ProjectCreateRequest
+from app.routers.datamodel import ProjectCreateRequest, VersionCreateRequest
 from app.services.testcase_generator import TestCaseGenerator
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.db_utilities.mongo_implementation import MongoImplement
+from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
+from app.utilities.db_utilities.models import Project, Version
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
 from app.services.llm_services.graph_pipeline import GraphPipe, memory
@@ -32,19 +34,21 @@ router = APIRouter(
 )
 logger.info("router is initialized")
 
-def create_gcp_admin():
-    gcp_config = EnvironmentVariableRetriever.get_env_variable("GOOGLE_CRED")
-    gcp_dict = json.loads(base64.b64decode(gcp_config))
-    with open("gcp_admin.json", "w") as f:
-        json.dump(gcp_dict, f)
-    logger.info("GCP admin credentials written to gcp_admin.json")
-    return gcp_dict
-create_gcp_admin()
+# def create_gcp_admin():
+#     gcp_config = EnvironmentVariableRetriever.get_env_variable("GOOGLE_CRED")
+#     gcp_dict = json.loads(base64.b64decode(gcp_config))
+#     with open("gcp_admin.json", "w") as f:
+#         json.dump(gcp_dict, f)
+#     logger.info("GCP admin credentials written to gcp_admin.json")
+#     return gcp_dict
+# create_gcp_admin()
 
 llm = LlmFactory.get_llm(type=Constants.fetch_constant("llm_model")["model_name"])
 llm_tools = LlmFactory.get_llm(type="gemini_2.5_flash")
 graph_pipeline = GraphPipe(llm=llm, llm_tools=llm_tools)
 testcase_generator =  TestCaseGenerator(graph_pipe = graph_pipeline)
+
+# MongoDB for test cases only
 mongo_client = MongoImplement(
     connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
     db_name=Constants.fetch_constant("mongo_db")["db_name"],
@@ -52,7 +56,15 @@ mongo_client = MongoImplement(
     server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
 )
 logger.info("MongoDB client initialized")
-project_collection = Constants.fetch_constant("mongo_collections")["projects_collection"]
+
+# SQLite for projects and versions
+sqlite_config = Constants.fetch_constant("sqlite_db")
+sqlite_client = SQLiteImplement(
+    db_path=sqlite_config["db_path"],
+    max_pool_size=sqlite_config["max_pool_size"]
+)
+logger.info("SQLite client initialized")
+
 testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
 
 
@@ -108,24 +120,29 @@ async def get_dashboard_data():
 async def createProject(request: ProjectCreateRequest):
     logger.info(f"Creating project: {request.project_name}")
     try:
-        existing_projects = mongo_client.read(project_collection, {"project_name": request.project_name}, max_count=1)
-        if existing_projects:
+        # Check if project name already exists using ORM
+        existing = sqlite_client.get_all(Project, filters={"project_name": request.project_name})
+        
+        if existing:
             logger.warning(f"Project with name '{request.project_name}' already exists")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail={
                                     "status": "Failed",
                                     "message": f"Project with name '{request.project_name}' already exists"
                                 })
-        project_doc = {
-            "project_name": request.project_name,
-            "description": request.description,
-            "no_test_cases":0,
-            "no_documents":0,
-            "created_at": datetime.now(),
-            "updated_at": datetime.now()
-        }
-        project_id = mongo_client.insert_one(project_collection, project_doc)
-        logger.info(f"Inserted project doc into collection '{project_collection}' result: {project_id}")
+        
+        # Create new project using ORM model
+        new_project = Project(
+            project_name=request.project_name,
+            description=request.description,
+            organization_id=request.organization_id,
+            no_test_cases=0,
+            no_documents=0
+        )
+        
+        project_id = sqlite_client.create(new_project)
+        
+        logger.info(f"Created project in SQLite with UUID: {project_id}")
         return {"status": "Success", "project_id": project_id}
 
     except Exception as exe:
@@ -133,67 +150,309 @@ async def createProject(request: ProjectCreateRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
 
+
+@router.post("/createVersion")
+async def create_version(request: VersionCreateRequest):
+    """Create a new version under a project"""
+    logger.info(f"Creating version: {request.version_name} for project: {request.project_id}")
+    try:
+        # Check if project exists in SQLite
+        project_query = "SELECT id, project_name FROM projects WHERE id = ?"
+        project = sqlite_client.fetch_one(project_query, (request.project_id,))
+        
+        if not project:
+            logger.warning(f"Project with id '{request.project_id}' not found")
+            raise HTTPException(using ORM
+        project = sqlite_client.get_by_id(Project, request.project_id)
+        
+        if not project:
+            logger.warning(f"Project with id '{request.project_id}' not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": "Failed",
+                    "message": f"Project with id '{request.project_id}' not found"
+                }
+            )
+        
+        # Check if version name already exists for this project
+        existing_versions = sqlite_client.get_all(
+            Version, 
+            filters={"project_id": request.project_id, "version_name": request.version_name}
+        )
+        
+        if existing_versions:
+            logger.warning(f"Version '{request.version_name}' already exists for project '{request.project_id}'")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": "Failed",
+                    "message": f"Version '{request.version_name}' already exists for this project"
+                }
+            )
+        
+        # Create new version using ORM model
+        new_version = Version(
+            project_id=request.project_id,
+            version_name=request.version_name,
+            description=request.description,
+            is_active=request.is_active if request.is_active is not None else True,
+            no_documents=0,
+            no_test_cases=0
+        )
+        
+        version_id = sqlite_client.create(new_version   "version_id": version_id,
+            "message": f"Version '{request.version_name}' created successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as exe:
+        logger.exception("Failed to create version")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "Failed", "message": str(exe)}
+        )
+
+
+@router.get("/getVersions/{project_id}")
+async def get_versions(project_id: str):
+    """Get all versions for a project"""
+    logger.info(f"Fetching versions for project: {project_id}")
+    try:
+        # Check if project exists using ORM
+        project = sqlite_client.get_by_id(Project, project_id)
+        
+        if not project:
+            logger.warning(f"Project with id '{project_id}' not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": "Failed",
+                    "message": f"Project with id '{project_id}' not found"
+                }
+            )
+        
+        # Get all versions for this project using ORM
+        versions = sqlite_client.get_all(Version, filters={"project_id": project_id}, order_by=Version.created_at.desc())
+        
+        response_versions = []
+        for version in versions:
+            version_data = {
+                "versionId": version.id,
+                "versionName": version.version_name,
+                "description": version.description or "",
+                "isActive": version.is_active,
+                "noDocuments": version.no_documents,
+                "noTestCases": version.no_test_cases,
+                "createdAt": version.created_at.isoformat() if version.created_at else None,
+                "updatedAt": version.updated_at.isoformat() if version.updated_at else None
+            }
+            response_versions.append(version_data)
+        
+        logger.info(f"Fetched {len(response_versions)} versions for project {project_id}")
+        return JSONResponse(
+            content={
+                "status": "Success",
+                "projectId": project_id,
+                "projectName": project.project_name,
+                "versions": response_versions
+            },
+            status_code=status.HTTP_200_OK
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as exe:
+        logger.exception("Failed to fetch versions")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "Failed", "message": str(exe)}
+        )
+
+
+@router.get("/getVersionDetail/{version_id}")
+async def get_version_detail(version_id: str):
+    """Get detailed information about a specific version"""
+    logger.info(f"Fetching details for version: {version_id}")
+    try:
+        # Get version with project info using JOIN
+        query = """
+            SELECT v.*, p.project_name 
+            FROM versions v 
+            JOIN projects p ON v.project_id = p.id 
+            WHERE v.id = ?
+        """
+        version = sqlite_client.fetch_one(query, (version_id,))
+        
+        if not version:
+            logger.warning(f"Version with id '{version_id}' not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": "Failed",
+                    "message": f"Version with id '{version_id}' not found"
+                }
+            )
+        
+        version_detail = {
+            "versionId": version["id"],
+            "projectId": version["project_id"],
+            "projectName": version["project_name"],
+            "versionName": version["version_name"],
+            "description": version.get("description", ""),
+            "isActive": bool(version.get("is_active", 1)),
+            "noDocuments": version.get("no_documents", 0),
+            "noTestCases": version.get("no_test_cases", 0),
+            "createdAt": version["created_at"],
+            "updatedAt": version["updated_at"]
+        }
+        
+        return JSONResponse(
+            content={"status": "Success", "version": version_detail},
+            status_code=status.HTTP_200_OK
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as exe:
+        logger.exception("Failed to fetch version details")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "Failed", "message": str(exe)}
+        )
+
+
+@router.put("/updateVersion/{version_id}")
+async def update_version(version_id: str, request: VersionCreateRequest):
+    """Update version details"""
+    logger.info(f"Updating version: {version_id}")
+    try:
+        # Check if version exists using ORM
+        version = sqlite_client.get_by_id(Version, version_id)
+        
+        if not version:
+            logger.warning(f"Version with id '{version_id}' not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": "Failed",
+                    "message": f"Version with id '{version_id}' not found"
+                }
+            )
+        
+        # Update version using ORM
+        update_data = {
+            "version_name": request.version_name,
+            "description": request.description,
+            "is_active": request.is_active if request.is_active is not None else True
+        }
+        sqlite_client.update(Version, version_id, update_data)
+        
+        logger.info(f"Updated version {version_id}")
+        return {
+            "status": "Success",
+            "message": f"Version updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as exe:
+        logger.exception("Failed to update version")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "Failed", "message": str(exe)}
+        )
+
 @router.get("/getProjects")
 async def getProjects():
     try:
-        projects = mongo_client.read("projects",query= {})
+        # Get all projects from SQLite
+        projects_query = "SELECT * FROM projects ORDER BY created_at DESC"
+        projects = sqlite_client.fetch_all(projects_query)
+        
         response_projects = []
         for project in projects:
             compliances = []
-            test_cases = mongo_client.read("test_cases", {"project_id": ObjectId(str(project["_id"]))})
+            # Get test cases from MongoDB using SQL project_id (UUID)
+            test_cases = mongo_client.read("test_cases", {"project_id": project["id"]})
+            for test_case iusing ORM
+        projects = sqlite_client.get_all(Project, order_by=Project.created_at.desc())
+        
+        response_projects = []
+        for project in projects:
+            compliances = []
+            # Get test cases from MongoDB using SQL project_id (UUID)
+            test_cases = mongo_client.read("test_cases", {"project_id": project.id})
             for test_case in test_cases:
                 if test_case.get("compliance_reference_standard") and test_case.get("compliance_reference_standard") not in compliances:
                     compliances.append(test_case.get("compliance_reference_standard"))
+            
+            # Get version count using ORM
+            version_count = sqlite_client.count(Version, filters={"project_id": project.id})
+            
             data = {
-                "projectName": project["project_name"],
-                "projectId": str(project["_id"]),
-                "description": project.get("description", ""),
-                "TestCasesGenerated": project.get("no_test_cases", 0),
-
-                "documents": project.get("no_documents", 0),
+                "projectName": project.project_name,
+                "projectId": project.id,
+                "description": project.description or "",
+                "TestCasesGenerated": project.no_test_cases,
+                "documents": project.no_documents,
+                "versions": version_count,
                 "ComplianceReferenceStandards": compliances,
-                "status": "active" if project.get("no_test_cases", 0) > 0 else "review" if project.get("no_documents", 0) > 0 else "completed",
-                "UpdatedTime": Helper.time_saved_format(project.get("updated_at", datetime.now()))
-            }
-            response_projects.append(data)
-        logger.info(f"Fetched {len(response_projects)} projects")
-        return JSONResponse(content={"projects": response_projects}, status_code=status.HTTP_200_OK)
-    except Exception as exe:
-        logger.exception("Failed to fetch project details")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"status": "Failed","message": str(exe),})
-
+                "status": "active" if project.no_test_cases > 0 else "review" if project.no_documents > 0 else "completed",
+                "UpdatedTime": Helper.time_saved_format(project.updated_at if project.updated_at else datetime.now(
 @router.get("/getTestCases/{project_id}")
-async def getTestCases(project_id: str):
+async def getTestCases(project_id: str, version_id: Optional[str] = None):
     try:
-        project_details = mongo_client.read(project_collection, {"_id": ObjectId(project_id)}, max_count=1)
-        if not project_details:
+        # Check if project exists using ORM
+        project = sqlite_client.get_by_id(Project, project_id)
+        
+        if not project:
             logger.warning(f"Project with id '{project_id}' not found")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail={
                                     "status": "Failed",
                                     "message": f"Project with id '{project_id}' not found"
                                 })
+        
+        # Build MongoDB query based on whether version_id is provided
+        query = {"project_id": project_id}
+        if version_id:
+            query["version_id"] = version_id
+            # Get version details using ORM
+            version = sqlite_client.get_by_id(Version, version_id)
+            version_name = version.version_name if version else None
         else:
-            response_testcases = []
-            testcases = mongo_client.read(testcase_collection, {"project_id": project_id})
-            if testcases:
-                for testcase in testcases:
-                    data = {
-                            "testUniqueID": str(testcase.get("_id", "")),
-                            "testCaseId":testcase.get("test_case_id"),
-                            "testCaseUniqueId": str(testcase["_id"]),
-                            "priority": testcase.get("priority"),
-                            "testCaseName": testcase.get("title"),
-                            "requirement": testcase.get("feature"),
-                            "steps": testcase.get("steps"),
-                            "complianceTags": [testcase.get("compliance_reference_standard")]},
-                    response_testcases.append(data)
-            else:
-                logger.info(f"No test cases found for project id: {project_id}")
-            return JSONResponse(content={"projectId": project_id, 
-                                         "projectName": project_details[0].get("project_name"),
-                                         "test_cases": response_testcases}, status_code=status.HTTP_200_OK)
+            version_name = None
+        
+        response_testcases = []
+        # Get test cases from MongoDB (still using MongoDB for flexible test case storage)
+        testcases = mongo_client.read(testcase_collection, query)
+        if testcases:
+            for testcase in testcases:
+                data = {
+                        "testUniqueID": str(testcase.get("_id", "")),
+                        "testCaseId":testcase.get("test_case_id"),
+                        "testCaseUniqueId": str(testcase["_id"]),
+                        "priority": testcase.get("priority"),
+                        "testCaseName": testcase.get("title"),
+                        "requirement": testcase.get("feature"),
+                        "steps": testcase.get("steps"),
+                        "complianceTags": [testcase.get("compliance_reference_standard")]},
+                response_testcases.append(data)
+        else:
+            logger.info(f"No test cases found for project id: {project_id}" + (f", version id: {version_id}" if version_id else ""))
+        
+        response = {
+            "projectId": project_id, 
+            "projectName": project.project_name,
+            "test_cases": response_testcases
+        }
+        if version_name:
+            response["versionName"] = version_name
+            response["versionId"] = version_id
+        
+        return JSONResponse(content=response, status_code=status.HTTP_200_OK)
     except Exception as exe:
         logger.error(f"Failed to fetch test cases {exe}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -237,19 +496,21 @@ async def getTestCaseDetail(testcase_id: str):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"status": "Failed","message": str(exe),})
 
-@router.post("/testcaseGenerator/{request_type}")
+@router.post("/testcaseGenerator/{request_type}/{project_type}")
 async def generate_testcases(
     request: Request,
+    project_type: str,
     request_type: str,
     project_id: str = Form(...),
+    version_id: Optional[str] = Form(None),
     command: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
 ):
-    # Fetch project by name
+    # Fetch project using ORM
     filename=None
-    existing_projects = mongo_client.read(project_collection,{"_id": ObjectId(project_id)},max_count=1)
+    project = sqlite_client.get_by_id(Project, project_id)
 
-    if not existing_projects:
+    if not project:
         logger.warning(f"Project '{project_id}' not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -259,8 +520,22 @@ async def generate_testcases(
             }
         )
 
-    project_id = str(existing_projects[0]["_id"])
-    logger.info(f"Found existing project '{project_id}' with _id: {project_id}")
+    logger.info(f"Found existing project '{project.project_name}' with UUID: {project_id}")
+    
+    # Validate version if provided
+    if version_id:
+        version = sqlite_client.get_by_id(Version, version_id)
+        if not version or version.project_id != project_id:
+            logger.warning(f"Version '{version_id}' not found for project '{project_id}'")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": "Failed",
+                    "message": f"Version not found for this project"
+                }
+            )
+        logger.info(f"Using version: {version.version_name}")
+    
     if request_type == "resume" and not command:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -295,7 +570,7 @@ async def generate_testcases(
 
 
             # Generate test cases
-            test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path, project_id=project_id, invoke_type=request_type, invoke_command=command)
+            test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path, project_id=project_id, invoke_type=request_type, invoke_command=command, project_type=project_type)
         except Exception as exe:
             logger.exception("Failed to process testcase generation request")
             raise HTTPException(

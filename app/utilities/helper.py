@@ -43,6 +43,21 @@ class Helper(metaclass = DcSingleton):
         """
         parser = DocumentParser()
         return parser.parse_file(file_path)
+    
+    @staticmethod
+    def extract_doc_pages(file_path: str) -> List[str]:
+        """
+        Extract raw text per page from PDF/DOCX/TXT/MD files.
+        
+        Args:
+            file_path (str): Path to the document file.
+            
+        Returns:
+            List[str]: List of page texts (one string per page).
+                      For text/markdown files, returns single-item list.
+        """
+        parser = DocumentParser()
+        return parser.extract_doc_pages(file_path)
             
     
     @staticmethod

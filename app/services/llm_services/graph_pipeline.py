@@ -22,6 +22,7 @@ from app.services.llm_services.graph_state import AgentState, PipelineState
 from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
+from app.services.requirements_extractor import RequirementsExtractor
 import sqlite3
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
@@ -32,8 +33,8 @@ fetch_prompt = PromptFetcher()
 # Fetch prompts from Langfuse with production labels
 validation_agent_prompt = fetch_prompt.fetch("validator-agent")
 test_case_generator_prompt = fetch_prompt.fetch("test-case-generator")
-
-
+# deep_extractor = RequirementsExtractor()
+deep_extractor = RequirementsExtractor(pages_per_chunk=10)
 class GraphPipe(metaclass=DcSingleton):
 
     def __init__(self, llm: LLMInterface, llm_tools: LLMInterface):
@@ -149,10 +150,15 @@ class GraphPipe(metaclass=DcSingleton):
         if file_paths:
             file_path = file_paths[0] if isinstance(file_paths, list) else file_paths
             logger.info(f"Parsing file: {file_path}")
-            md, images = parser.parse_file(file_path)
-            logger.info(f"Document parsed: {len(md.split())} words, {len(images)} images extracted")
+            if state.get("project_type") == "deep_file_extractor":
+                logger.info("Using deep file extractor as per project type")
+                md, images = deep_extractor.extract_from_file(file_path)
+                images = None
+            else:
+                md, images = parser.parse_file(file_path)
+            # logger.info(f"Document parsed: {len(md)} words, {len(images)} images extracted")
             return {
-                "document": md,
+                "document": str(md),
                 "images": images,
                 "file_path": [file_path]
             }
@@ -309,7 +315,7 @@ class GraphPipe(metaclass=DcSingleton):
         return summary
 
     # --- Graph Invocation Methods ---
-    def invoke_graph(self, document_path, config) -> AgentState:
+    def invoke_graph(self, document_path, config, project_type = "") -> AgentState:
         """Invoke the graph with a document"""
         logger.info(f"Invoking graph with document_path: {document_path}")
         result = self.graph.invoke(
@@ -327,7 +333,8 @@ class GraphPipe(metaclass=DcSingleton):
                 "next_node": "context_builder",
                 "context_agent_messages": [],
                 "document": "",
-                "images": []
+                "images": [],
+                "project_type": project_type
             },
             config=config
         )

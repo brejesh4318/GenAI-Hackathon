@@ -8,14 +8,32 @@ llm_model:
   model_name: gemini-2.5-flash-lite
   temperature: 1
 
+deep_file_extractor: true
+
+jwt:
+  secret_key: "your-secret-key-change-in-production-use-env-variable"
+  algorithm: "HS256"
+  access_token_expire_minutes: 1440  # 24 hours
+
+sqlite_db:
+  db_path: "tmp/dash-test.db"
+  max_pool_size: 5
 
 mongo_db:
   db_name: dash-test-nosql
   max_pool_size: 5
   server_selection_timeout: 60000
 
+postgres_db:
+  host: localhost
+  port: 5432
+  db_name: dash-test-sql
+  max_pool_size: 10
+  connection_timeout: 30
+
 mongo_collections:
   projects_collection: "projects"
+  versions_collection: "versions"
   prompt: "prompts"
   testcases: "test_cases"
 

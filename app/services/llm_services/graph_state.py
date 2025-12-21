@@ -22,6 +22,7 @@ class AgentState(TypedDict):
     test_cases_status: Optional[str]
     validation_status: Optional[str]
     next_node: Optional[str]
+    project_type: Optional[str]
     context_agent_messages: Annotated[List[AnyMessage], add_messages]
 
 

@@ -31,6 +31,12 @@ dependencies = [
     "pandas (>=2.3.3,<3.0.0)",
     "langgraph-checkpoint-sqlite (>=3.0.0,<4.0.0)",
     "langfuse (>=3.10.5,<4.0.0)",
+    "colorlog (>=6.10.0,<7.0.0)",
+    "sqlalchemy (>=2.0.45,<3.0.0)",
+    "aiosqlite (>=0.22.0,<0.23.0)",
+    "docling (>=2.65.0,<3.0.0)",
+    "jwt (>=1.4.0,<2.0.0)",
+    "passlib (>=1.7.4,<2.0.0)",
 ]
 [tool.poetry]
 package-mode = false

@@ -14,7 +14,7 @@ logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"
 class DocumentParser(metaclass=DcSingleton):
     """Parse documents and extract markdown content with images."""
     
-    SUPPORTED_DOCLING_FORMATS = {'.pdf', '.docx'}
+    SUPPORTED_DOCLING_FORMATS = {'.pdf', '.docx', ".json"}
     SUPPORTED_TEXT_FORMATS = {'.txt', '.md'}
     
     def __init__(self, image_scale: float = 2.0):
@@ -144,6 +144,61 @@ class DocumentParser(metaclass=DcSingleton):
         except Exception as e:
             logger.error(f"Error reading {file_path}: {str(e)}")
             raise Exception(f"Failed to read text file: {str(e)}")
+    
+    def extract_doc_pages(self, file_path: str) -> List[str]:
+        """
+        Extract raw text from each page of a document.
+        
+        Args:
+            file_path: Path to the document file (PDF, DOCX, TXT, MD)
+            
+        Returns:
+            List[str]: List of page texts (one string per page)
+            For text/markdown files, returns a single-item list with full content.
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            ValueError: If file format is not supported
+            Exception: For other parsing errors
+        """
+        # Validate file existence
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        file_extension = path.suffix.lower()
+        
+        # Handle text files (return as single page)
+        if file_extension in self.SUPPORTED_TEXT_FORMATS:
+            content, _ = self._parse_text_file(file_path)
+            return [content]
+        
+        # Handle PDF/DOCX with Docling
+        if file_extension in self.SUPPORTED_DOCLING_FORMATS:
+            try:
+                logger.info(f"Extracting pages from {file_path} with Docling...")
+                
+                # Convert document
+                result = self.doc_converter.convert(file_path)
+                
+                # Extract text per page
+                pages = []
+                for no, pg in result.document.pages.items():
+                    page_text = result.document.export_to_markdown(page_no=no)
+                    pages.append(page_text)
+                
+                logger.info(f"Successfully extracted {len(pages)} pages from {file_path}")
+                return pages
+                
+            except Exception as e:
+                logger.error(f"Error extracting pages from {file_path}: {str(e)}")
+                raise Exception(f"Failed to extract pages: {str(e)}")
+        
+        else:
+            raise ValueError(
+                f"Unsupported file format: {file_extension}. "
+                f"Supported formats: {self.SUPPORTED_DOCLING_FORMATS | self.SUPPORTED_TEXT_FORMATS}"
+            )
 
 
 # # Convenience function for single-use parsing
