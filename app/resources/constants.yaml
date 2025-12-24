@@ -36,6 +36,8 @@ mongo_collections:
   versions_collection: "versions"
   prompt: "prompts"
   testcases: "test_cases"
+  document_pages: "document_pages"
+  requirements: "requirements"
 
 prompts:
 

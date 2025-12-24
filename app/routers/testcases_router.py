@@ -37,7 +37,7 @@ testcase_generator = TestCaseGenerator(graph_pipe=graph_pipeline)
 
 # Initialize database clients
 mongo_client = MongoImplement(
-    connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
+    connection_string=EnvironmentVariableRetriever.get_env_variable("MONGO_DB_URI"),
     db_name=Constants.fetch_constant("mongo_db")["db_name"],
     max_pool=Constants.fetch_constant("mongo_db")["max_pool_size"],
     server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
@@ -304,14 +304,14 @@ async def generate_testcases(
             path = Helper.save_file("/tmp", content=content_bytes, filename=filename)
             logger.info(f"Saved uploaded file to temp path: {path}")
 
-            # Generate test cases
+            # Generate test cases with MongoDB storage
             test_cases = await asyncio.to_thread(
                 testcase_generator.generate_testcase, 
                 document_path=path, 
                 project_id=project_id, 
                 invoke_type=request_type, 
                 invoke_command=command, 
-                project_type=project_type
+                version_id=version_id
             )
         except Exception as exe:
             logger.exception("Failed to process testcase generation request")

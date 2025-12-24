@@ -1,31 +1,29 @@
 """
-Dashboard and miscellaneous endpoints
+Utility endpoints for file operations and integrations
 """
-import io
 import asyncio
+import io
 import pandas as pd
-from typing import Optional
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
-from httpx import BasicAuth
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 import httpx
-from app.utilities.auth_helper import AuthManager
+from httpx import BasicAuth
 
-from app.routers.datamodel import JiraPushRequest
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
-from app.utilities.db_utilities.models import Project, ProjectPermission, User
+from app.utilities.db_utilities.models import Project
 from app.utilities.helper import Helper
-from bson import ObjectId
-from datetime import datetime
+from app.routers.datamodel import JiraPushRequest
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
 router = APIRouter(
-    tags=["Dashboard & Utility"],
+    prefix="/utils",
+    tags=["Utilities"],
     responses={status.HTTP_404_NOT_FOUND: {"description": "not found"}}
 )
 
@@ -46,77 +44,9 @@ sqlite_client = SQLiteImplement(
 testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
 
 
-@router.get("/")
-async def root():
-    """Health check endpoint"""
-    return {"status": "healthy"}
-
-
-@router.get("/dashboardData")
-async def get_dashboard_data(current_user: User = Depends(AuthManager.get_current_user)):
-    """Get dashboard statistics (requires authentication)"""
-    try:
-        compliance_coverage = 0
-        testcases_generated = 0
-        compliance_covered = 0
-        timesaved = 0
-        recent_projects = []
-        
-        # Get recent projects from SQLite
-        all_projects = sqlite_client.get_all(Project, order_by=Project.created_at.desc())
-        
-        # Filter by user permissions
-        user_id = current_user.id
-        user_perms = sqlite_client.get_all(ProjectPermission, filters={"user_id": user_id})
-        project_ids = [perm.project_id for perm in user_perms]
-        projects = [p for p in all_projects if p.id in project_ids]
-        if projects:
-            # Get first 3 projects
-            projects = projects[:3]
-            testcases = mongo_client.read("test_cases", {}) 
-            logger.info(f"Fetched {len(projects)} recent projects for dashboard")
-            logger.info(f"Len Testcases {len(testcases)}")
-            
-            if testcases:
-                for testcase in testcases:
-                    if testcase["compliance_reference_standard"]:
-                        compliance_covered += 1
-                compliance_coverage = int((compliance_covered / len(testcases)) * 100)
-                testcases_generated = len(testcases)
-                timesaved += round((len(testcases) * 5) / 60, 2)  # convert minutes to hours
-                
-            for project in projects:
-                recent_projects.append({
-                    "projectName": project.project_name,
-                    "projectId": project.id,
-                    "TestCasesGenerated": project.no_test_cases,
-                    "description": project.description or "",
-                    "UpdatedTime": Helper.time_saved_format(project.updated_at if project.updated_at else datetime.now()),
-                    "status": "active" if project.no_test_cases > 0 else "review" if project.no_documents > 0 else "completed"
-                })
-        
-        return JSONResponse(content={
-            "TotalTestCasesGenerated": testcases_generated,
-            "complianceCoveredTestCases": compliance_covered,
-            "complianceCoverage": compliance_coverage,
-            "timeSaved": timesaved,
-            "recentProject": recent_projects
-        })
-                
-    except Exception as exe:
-        logger.error(f"Failed to fetch dashboard data: {exe}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"status": "Failed", "message": str(exe)}
-        )
-
-
-@router.post("/uploadFile")
-async def upload_file(
-    file: UploadFile = File(...),
-    current_user: User = Depends(AuthManager.get_current_user)
-):
-    """Upload and parse a file (requires authentication)"""
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload and process a document file"""
     try:
         content = await file.read()
         filename = file.filename
@@ -129,41 +59,35 @@ async def upload_file(
         return {"status": "success", "file_path": path}
     except Exception as e:
         logger.error(f"Failed to upload file: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "error", "message": str(e)}
+        )
 
 
 @router.get("/export/{project_id}")
-async def export_test_cases(
-    project_id: str,
-    current_user: User = Depends(AuthManager.get_current_user)
-):
-    """Export test cases to CSV (requires authentication)"""
+async def export_test_cases(project_id: str):
+    """Export test cases to CSV format"""
     try:
-        # 1. Get project from SQLite using ORM
+        # Get project from SQLite using ORM
         project = sqlite_client.get_by_id(Project, project_id)
         if not project:
             logger.warning(f"Project with id '{project_id}' not found")
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        # Check user has permission
-        user_id = current_user.id
-        user_perms = sqlite_client.get_all(
-            ProjectPermission,
-            filters={"project_id": project_id, "user_id": user_id}
-        )
-        if not user_perms:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"status": "Failed", "message": "You don't have permission to export test cases for this project"}
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"status": "Failed", "message": "Project not found"}
             )
 
-        # 2. Get test cases
+        # Get test cases from MongoDB
         test_cases = list(mongo_client.read(testcase_collection, {"project_id": project_id}))
         if not test_cases:
             logger.warning(f"No test cases found for project id '{project_id}'")
-            raise HTTPException(status_code=404, detail="No test cases found for this project")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"status": "Failed", "message": "No test cases found for this project"}
+            )
 
-        # 3. Normalize data for CSV
+        # Normalize data for CSV
         data = []
         for tc in test_cases:
             data.append({
@@ -182,63 +106,49 @@ async def export_test_cases(
                 "Compliance Requirement": tc.get("compliance_reference_requirement_text") or ""
             })
 
-        # 4. Create DataFrame
+        # Create DataFrame and export to CSV
         df = pd.DataFrame(data)
-
-        # 5. Save to in-memory CSV
         buffer = io.StringIO()
         df.to_csv(buffer, index=False)
         buffer.seek(0)
 
-        # 6. Stream CSV response
         filename = f"{project.project_name}_test_cases.csv"
         logger.info(f"Exporting {len(test_cases)} test cases for project '{project.project_name}'")
+        
         return StreamingResponse(
             buffer,
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-    except HTTPException as he:
-        raise he
+        
+    except HTTPException:
+        raise
     except Exception as exe:
-        logger.error(f"Failed to export test cases for project id '{project_id}'")
+        logger.error(f"Failed to export test cases: {str(exe)}", exc_info=True)
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "Failed", "message": str(exe)}
         )
 
 
-@router.post("/jiraPush")
-async def push_jira(
-    request: JiraPushRequest,
-    current_user: User = Depends(AuthManager.get_current_user)
-):
+@router.post("/jira/push")
+async def push_to_jira(request: JiraPushRequest):
     """
-    Push selected test cases from MongoDB to Jira (bulk mode with batching).
-    Requires owner/editor permission for the project.
+    Push selected test cases to Jira in bulk mode with batching.
+    Supports rate limiting and handles large batches.
     """
     try:
         test_case_ids = request.selected_ids
         project_id = request.project_id
         domain_name = request.domain_name
         jira_api = request.jira_api
-        user_id = current_user.id
         
-        # Fetch project info from SQLite using ORM
+        # Fetch project info from SQLite
         project = sqlite_client.get_by_id(Project, project_id)
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        
-        # Check user has permission (owner or editor)
-        user_perms = sqlite_client.get_all(
-            ProjectPermission,
-            filters={"project_id": project_id, "user_id": user_id}
-        )
-        
-        if not user_perms or user_perms[0].permission_level not in ['owner', 'editor']:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"status": "Failed", "message": "You don't have permission to push test cases to Jira for this project"}
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"status": "Failed", "message": "Project not found"}
             )
 
         # Jira API setup
@@ -246,16 +156,18 @@ async def push_jira(
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
         all_issues = []
-        logger.info("Fetching Test cases from DB")
+        logger.info(f"Fetching {len(test_case_ids)} test cases from MongoDB")
         
         # Build issues payload for each test case
         for test_case_id in test_case_ids:
             test_case = mongo_client.read(testcase_collection, {"_id": ObjectId(test_case_id)})
             if not test_case:
-                continue  # skip if not found
+                logger.warning(f"Test case {test_case_id} not found, skipping")
+                continue
             test_case = test_case[0]
 
             description_blocks = []
+            
             def add_block(label, value):
                 """Helper to format rich text paragraphs"""
                 if value:
@@ -284,7 +196,7 @@ async def push_jira(
 
             issue = {
                 "fields": {
-                    "project": {"key": getattr(project, "project_key", "HS")},  # fallback project key
+                    "project": {"key": getattr(project, "project_key", "HS")},
                     "summary": test_case.get("title", "Untitled Test Case"),
                     "issuetype": {"name": "Task"},
                     "description": {
@@ -298,17 +210,19 @@ async def push_jira(
                     "labels": ["spec2test", "auto-generated"],
                 }
             }
-
             all_issues.append(issue)
 
+        # Push to Jira in batches to respect API rate limits
         BATCH_SIZE = 45
         created_issues = []
-        logger.info("Pushing Test cases to Jira")
+        
+        logger.info(f"Pushing {len(all_issues)} test cases to Jira in batches of {BATCH_SIZE}")
         
         for i in range(0, len(all_issues), BATCH_SIZE):
-            batch = all_issues[i:i+BATCH_SIZE]
+            batch = all_issues[i:i + BATCH_SIZE]
             payload = {"issueUpdates": batch}
-            logger.info(f"Pushing test cases batch to Jira batch size: {len(batch)}")
+            
+            logger.info(f"Pushing batch {i // BATCH_SIZE + 1}: {len(batch)} issues")
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -320,13 +234,19 @@ async def push_jira(
                 )
 
             if response.status_code not in (200, 201):
-                raise HTTPException(status_code=response.status_code, detail=response.text)
+                logger.error(f"Jira API error: {response.status_code} - {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail={"status": "Failed", "message": response.text}
+                )
 
             created_issues.extend(response.json().get("issues", []))
 
-            # Respect Jira API rate limits (1 request/sec safe zone)
+            # Rate limiting: 1 request per second
             await asyncio.sleep(1)
 
+        logger.info(f"Successfully pushed {len(created_issues)} issues to Jira")
+        
         return {
             "status": "success",
             "total_pushed": len(created_issues),
@@ -336,5 +256,8 @@ async def push_jira(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to push to Jira")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to push to Jira: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "Failed", "message": str(e)}
+        )

@@ -3,8 +3,10 @@ from app.routers import (
     versions_router,
     testcases_router,
     dashboard_router,
-    auth_router
+    auth_router,
+    utilities_router
 )
+
 import time
 from fastapi import FastAPI, Request
 from app.utilities import dc_logger 
@@ -48,6 +50,7 @@ subapi.include_router(dashboard_router.router)  # Root endpoints (/, /dashboardD
 subapi.include_router(projects_router.router)  # /projects/*
 subapi.include_router(versions_router.router)  # /versions/*
 subapi.include_router(testcases_router.router)  # /testcases/*
+subapi.include_router(utilities_router.router)  # /utils/* (upload, export, jira)
 
 app.mount("/v1/dash-test", subapi)
-logger.info("main initialized with split routers")
+logger.info("main initialized with modular routers")

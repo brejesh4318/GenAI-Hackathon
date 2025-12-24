@@ -11,6 +11,8 @@ class AgentState(TypedDict):
     """
     user_request: str
     file_path: list[str]
+    project_id: Optional[str]
+    version_id: Optional[str]
     document: str
     images: List[str]
     context: str
@@ -22,7 +24,7 @@ class AgentState(TypedDict):
     test_cases_status: Optional[str]
     validation_status: Optional[str]
     next_node: Optional[str]
-    project_type: Optional[str]
+    extraction_result: Optional[Dict]
     context_agent_messages: Annotated[List[AnyMessage], add_messages]
 
 

@@ -50,7 +50,7 @@ testcase_generator =  TestCaseGenerator(graph_pipe = graph_pipeline)
 
 # MongoDB for test cases only
 mongo_client = MongoImplement(
-    connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
+    connection_string=EnvironmentVariableRetriever.get_env_variable("MONGO_DB_URI"),
     db_name=Constants.fetch_constant("mongo_db")["db_name"],
     max_pool=Constants.fetch_constant("mongo_db")["max_pool_size"],
     server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
@@ -546,7 +546,7 @@ async def generate_testcases(
         )
     if request_type =="resume":
         logger.info(f"Resuming testcase generation for project: {project_id}")
-        test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=None, project_id=project_id, invoke_type=request_type, invoke_command=command)
+        test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=None, project_id=project_id, invoke_type=request_type, invoke_command=command, version_id=version_id)
     else:
         logger.info(f"Starting new testcase generation for project: {project_id}")
         memory.delete_thread(thread_id=project_id)
@@ -569,8 +569,8 @@ async def generate_testcases(
             logger.info(f"Saved uploaded file to temp path: {path}")
 
 
-            # Generate test cases
-            test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path, project_id=project_id, invoke_type=request_type, invoke_command=command, project_type=project_type)
+            # Generate test cases with MongoDB storage
+            test_cases = await asyncio.to_thread(testcase_generator.generate_testcase, document_path=path, project_id=project_id, invoke_type=request_type, invoke_command=command, version_id=version_id)
         except Exception as exe:
             logger.exception("Failed to process testcase generation request")
             raise HTTPException(

@@ -22,7 +22,7 @@ from app.services.llm_services.graph_state import AgentState, PipelineState
 from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
-from app.services.requirements_extractor import RequirementsExtractor
+from app.services.req_extract_service.requirements_extractor import RequirementsExtractor
 import sqlite3
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
@@ -142,28 +142,50 @@ class GraphPipe(metaclass=DcSingleton):
 
     # --- Node Implementations ---
     def file_parser(self, state: AgentState) -> AgentState:
-        """Parse input file and extract document content and images"""
-        logger.info(f"--- Executing File Parser Node ---")
+        """Parse and extract requirements from document with MongoDB storage"""
+        logger.info(f"--- Executing File Parser Node (Deep Extractor with MongoDB) ---")
         file_paths = state.get("file_path", [])
+        project_id = state.get("project_id")
+        version_id = state.get("version_id")
         
-        if file_paths:
-            file_path = file_paths[0] if isinstance(file_paths, list) else file_paths
-            logger.info(f"Parsing file: {file_path}")
-            if state.get("project_type") == "deep_file_extractor":
-                logger.info("Using deep file extractor as per project type")
-                md, images = deep_extractor.extract_from_file(file_path)
-                images = None
-            else:
-                md, images = parser.parse_file(file_path)
-            # logger.info(f"Document parsed: {len(md)} words, {len(images)} images extracted")
-            return {
-                "document": str(md),
-                "images": images,
-                "file_path": [file_path]
-            }
-        else:
+        if not file_paths:
             logger.warning("No file path provided in state")
-            return {"document": "", "images": []}
+            return {"document": "", "images": [], "extraction_result": None}
+        
+        file_path = file_paths[0] if isinstance(file_paths, list) else file_paths
+        logger.info(f"Parsing file: {file_path}")
+        
+        # Use extract_and_store for MongoDB persistence if project/version provided
+        if project_id and version_id:
+            logger.info(f"Storing requirements to MongoDB (project={project_id}, version={version_id})")
+            extraction_result = deep_extractor.extract_and_store(
+                file_path=file_path,
+                project_id=project_id,
+                version_id=version_id
+            )
+            
+            if extraction_result["success"]:
+                logger.info(
+                    f"Extraction successful: {extraction_result['total_requirements']} requirements "
+                    f"from {extraction_result['total_pages']} pages stored in MongoDB"
+                )
+            else:
+                logger.error(f"Extraction failed: {extraction_result['message']}")
+            
+            # Still get markdown for pipeline compatibility
+            md, _ = deep_extractor.extract_from_file(file_path)
+        else:
+            # Fallback to legacy mode without MongoDB storage
+            logger.warning("project_id or version_id missing - using legacy extraction without MongoDB storage")
+            md, _ = deep_extractor.extract_from_file(file_path)
+            extraction_result = None
+        
+        return {
+            "document": str(md),
+            "images": None,
+            "file_path": [file_path],
+            "extraction_result": extraction_result
+        }
 
     def brain_node(self, state: AgentState) -> AgentState:
         """Orchestrator node that decides the next step based on current state"""
@@ -314,12 +336,14 @@ class GraphPipe(metaclass=DcSingleton):
         return summary
 
     # --- Graph Invocation Methods ---
-    def invoke_graph(self, document_path, config, project_type = "") -> AgentState:
+    def invoke_graph(self, document_path, config, project_id: str = None, version_id: str = None) -> AgentState:
         """Invoke the graph with a document"""
-        logger.info(f"Invoking graph with document_path: {document_path}")
+        logger.info(f"Invoking graph with document_path: {document_path}, project_id: {project_id}, version_id: {version_id}")
         result = self.graph.invoke(
             {
                 "file_path": [document_path] if not isinstance(document_path, list) else document_path,
+                "project_id": project_id,
+                "version_id": version_id,
                 "user_request": "Generate comprehensive test cases",
                 "context": "",
                 "context_summary": None,
@@ -333,7 +357,7 @@ class GraphPipe(metaclass=DcSingleton):
                 "context_agent_messages": [],
                 "document": "",
                 "images": [],
-                "project_type": project_type
+                "extraction_result": None
             },
             config=config
         )

@@ -26,7 +26,7 @@ router = APIRouter(
 
 # Initialize database clients
 mongo_client = MongoImplement(
-    connection_string=EnvironmentVariableRetriever.get_env_variable("FIRESTORE_DB_URI"),
+    connection_string=EnvironmentVariableRetriever.get_env_variable("MONGO_DB_URI"),
     db_name=Constants.fetch_constant("mongo_db")["db_name"],
     max_pool=Constants.fetch_constant("mongo_db")["max_pool_size"],
     server_selection_timeout=Constants.fetch_constant("mongo_db")["server_selection_timeout"]
