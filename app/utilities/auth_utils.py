@@ -14,9 +14,9 @@ logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT settings - Add to constants.yaml
-SECRET_KEY = Constants.fetch_constant("jwt", {}).get("secret_key", "your-secret-key-change-in-production")
-ALGORITHM = Constants.fetch_constant("jwt", {}).get("algorithm", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = Constants.fetch_constant("jwt", {}).get("access_token_expire_minutes", 30)
+SECRET_KEY = Constants.fetch_constant("jwt").get("secret_key", "your-secret-key-change-in-production")
+ALGORITHM = Constants.fetch_constant("jwt").get("algorithm", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = Constants.fetch_constant("jwt").get("access_token_expire_minutes", 30)
 
 
 def hash_password(password: str) -> str:

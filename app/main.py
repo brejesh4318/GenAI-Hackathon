@@ -1,4 +1,10 @@
-from app.routers.router import router
+from app.routers import (
+    projects_router,
+    versions_router,
+    testcases_router,
+    dashboard_router,
+    auth_router
+)
 import time
 from fastapi import FastAPI, Request
 from app.utilities import dc_logger 
@@ -32,9 +38,16 @@ async def add_process_time_header(request: Request, call_next):
 
 @app.get("/")
 async def root():
-    return {"Server is On":"Status Healthy"}
+    return {"Server is On": "Status Healthy"}
 
+
+# Create subapi and mount all routers
 subapi = FastAPI()
-subapi.include_router(router)
+subapi.include_router(auth_router.router)  # /auth/* (login, register)
+subapi.include_router(dashboard_router.router)  # Root endpoints (/, /dashboardData, etc.)
+subapi.include_router(projects_router.router)  # /projects/*
+subapi.include_router(versions_router.router)  # /versions/*
+subapi.include_router(testcases_router.router)  # /testcases/*
+
 app.mount("/v1/dash-test", subapi)
-logger.info("main initialized")
+logger.info("main initialized with split routers")

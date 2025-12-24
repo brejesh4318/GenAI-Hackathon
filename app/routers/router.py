@@ -156,13 +156,7 @@ async def create_version(request: VersionCreateRequest):
     """Create a new version under a project"""
     logger.info(f"Creating version: {request.version_name} for project: {request.project_id}")
     try:
-        # Check if project exists in SQLite
-        project_query = "SELECT id, project_name FROM projects WHERE id = ?"
-        project = sqlite_client.fetch_one(project_query, (request.project_id,))
-        
-        if not project:
-            logger.warning(f"Project with id '{request.project_id}' not found")
-            raise HTTPException(using ORM
+        # Check if project exists using ORM
         project = sqlite_client.get_by_id(Project, request.project_id)
         
         if not project:
@@ -201,7 +195,12 @@ async def create_version(request: VersionCreateRequest):
             no_test_cases=0
         )
         
-        version_id = sqlite_client.create(new_version   "version_id": version_id,
+        version_id = sqlite_client.create(new_version)
+        
+        logger.info(f"Created version in SQLite with UUID: {version_id}")
+        return {
+            "status": "Success",
+            "version_id": version_id,
             "message": f"Version '{request.version_name}' created successfully"
         }
     
@@ -367,16 +366,7 @@ async def update_version(version_id: str, request: VersionCreateRequest):
 @router.get("/getProjects")
 async def getProjects():
     try:
-        # Get all projects from SQLite
-        projects_query = "SELECT * FROM projects ORDER BY created_at DESC"
-        projects = sqlite_client.fetch_all(projects_query)
-        
-        response_projects = []
-        for project in projects:
-            compliances = []
-            # Get test cases from MongoDB using SQL project_id (UUID)
-            test_cases = mongo_client.read("test_cases", {"project_id": project["id"]})
-            for test_case iusing ORM
+        # Get all projects from SQLite using ORM
         projects = sqlite_client.get_all(Project, order_by=Project.created_at.desc())
         
         response_projects = []
@@ -400,7 +390,16 @@ async def getProjects():
                 "versions": version_count,
                 "ComplianceReferenceStandards": compliances,
                 "status": "active" if project.no_test_cases > 0 else "review" if project.no_documents > 0 else "completed",
-                "UpdatedTime": Helper.time_saved_format(project.updated_at if project.updated_at else datetime.now(
+                "UpdatedTime": Helper.time_saved_format(project.updated_at if project.updated_at else datetime.now())
+            }
+            response_projects.append(data)
+        
+        logger.info(f"Fetched {len(response_projects)} projects")
+        return JSONResponse(content=response_projects, status_code=status.HTTP_200_OK)
+    except Exception as exe:
+        logger.error(f"Failed to fetch projects: {exe}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"status": "Failed", "message": str(exe)})
 @router.get("/getTestCases/{project_id}")
 async def getTestCases(project_id: str, version_id: Optional[str] = None):
     try:
@@ -431,14 +430,15 @@ async def getTestCases(project_id: str, version_id: Optional[str] = None):
         if testcases:
             for testcase in testcases:
                 data = {
-                        "testUniqueID": str(testcase.get("_id", "")),
-                        "testCaseId":testcase.get("test_case_id"),
-                        "testCaseUniqueId": str(testcase["_id"]),
-                        "priority": testcase.get("priority"),
-                        "testCaseName": testcase.get("title"),
-                        "requirement": testcase.get("feature"),
-                        "steps": testcase.get("steps"),
-                        "complianceTags": [testcase.get("compliance_reference_standard")]},
+                    "testUniqueID": str(testcase.get("_id", "")),
+                    "testCaseId": testcase.get("test_case_id"),
+                    "testCaseUniqueId": str(testcase["_id"]),
+                    "priority": testcase.get("priority"),
+                    "testCaseName": testcase.get("title"),
+                    "requirement": testcase.get("feature"),
+                    "steps": testcase.get("steps"),
+                    "complianceTags": [testcase.get("compliance_reference_standard")]
+                }
                 response_testcases.append(data)
         else:
             logger.info(f"No test cases found for project id: {project_id}" + (f", version id: {version_id}" if version_id else ""))
@@ -592,26 +592,29 @@ async def generate_testcases(
             )
         test_cases = test_cases["response"]
         logger.info( f"Generated {len(test_cases)} test cases for project: {project_id}")
-        test_cases = [{"project_id": str(project_id), **tc} for tc in test_cases]
-        # Insert test cases into collection
-        testcases_collection = testcase_collection
-
-        testcases_result = mongo_client.insert_many(testcases_collection, test_cases)
-        logger.info(
-            f"Inserted testcases into collection '{testcases_collection}' result: {testcases_result}"
-        )
-        updated_no_test_cases = existing_projects[-1]["no_test_cases"] + len(test_cases)
-        updated_no_documents = existing_projects[-1]["no_documents"] + 1
-        mongo_client.update_one(
-            collection_name=Constants.fetch_constant("mongo_collections")["projects_collection"],
-            query={"_id": ObjectId(project_id)},
-            data={
-                "no_test_cases": updated_no_test_cases,
-                "no_documents": updated_no_documents,
-                "updated_at": datetime.now()
+        # Add project_id and version_id to test cases
+        test_cases = [{"project_id": str(project_id), "version_id": str(version_id) if version_id else None, **tc} for tc in test_cases]
+        
+        # Insert test cases into MongoDB
+        testcases_result = mongo_client.insert_many(testcase_collection, test_cases)
+        logger.info(f"Inserted {len(test_cases)} testcases into MongoDB")
+        
+        # Update project counts using ORM
+        update_data = {
+            "no_test_cases": project.no_test_cases + len(test_cases),
+            "no_documents": project.no_documents + 1
+        }
+        sqlite_client.update(Project, project_id, update_data)
+        
+        # Update version counts if version_id provided
+        if version_id:
+            version_update_data = {
+                "no_test_cases": version.no_test_cases + len(test_cases),
+                "no_documents": version.no_documents + 1
             }
-        )
-        logger.info("Updated Project details in db")
+            sqlite_client.update(Version, version_id, version_update_data)
+        
+        logger.info("Updated Project/Version details in database")
         return JSONResponse(content={"status": "success"}, status_code=status.HTTP_200_OK)
 
     except Exception as exe:
@@ -653,8 +656,8 @@ async def upload_file(file: UploadFile = File(...)):
 @router.get("/export/{project_id}")
 async def export_test_cases(project_id: str):
     try:
-        # 1. Get project
-        project = mongo_client.read(project_collection, {"_id": ObjectId(project_id)})
+        # 1. Get project from SQLite using ORM
+        project = sqlite_client.get_by_id(Project, project_id)
         if not project:
             logger.warning(f"Project with id '{project_id}' not found")
             raise HTTPException(status_code=404, detail="Project not found")
@@ -693,8 +696,8 @@ async def export_test_cases(project_id: str):
         buffer.seek(0)
 
         # 6. Stream CSV response
-        filename = f"{project[0]['project_name']}_test_cases.csv"
-        logger.info(f"Exporting {len(test_cases)} test cases for project '{project[0]['project_name']}'")
+        filename = f"{project.project_name}_test_cases.csv"
+        logger.info(f"Exporting {len(test_cases)} test cases for project '{project.project_name}'")
         return StreamingResponse(
             buffer,
             media_type="text/csv",
@@ -720,11 +723,11 @@ async def push_jira(request: JiraPushRequest):
         project_id = request.project_id
         domain_name = request.domain_name
         jira_api = request.jira_api
-        # Fetch project info
-        project_doc = mongo_client.read(project_collection, {"_id": ObjectId(project_id)})
-        if not project_doc:
+        
+        # Fetch project info from SQLite using ORM
+        project = sqlite_client.get_by_id(Project, project_id)
+        if not project:
             raise HTTPException(status_code=404, detail="Project not found.")
-        project_doc = project_doc[0]
 
         # Jira API setup
         jira_url = f"https://{domain_name}.atlassian.net/rest/api/3/issue/bulk"
@@ -769,7 +772,7 @@ async def push_jira(request: JiraPushRequest):
 
             issue = {
                 "fields": {
-                    "project": {"key": project_doc.get("project_key", "HS")},  # fallback project key
+                    "project": {"key": getattr(project, "project_key", "HS")},  # fallback project key
                     "summary": test_case.get("title", "Untitled Test Case"),
                     "issuetype": {"name": "Task"},
                     "description": {

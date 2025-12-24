@@ -66,7 +66,7 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph = StateGraph(AgentState)
 
         # Add nodes
-        logger.info("Adding nodes to workflow graph")
+        
         workflow_graph.add_node("file_parser", self.file_parser)
         workflow_graph.add_node("brain", self.brain_node)
         workflow_graph.add_node("context_builder", self.context_builder_node)
@@ -75,18 +75,17 @@ class GraphPipe(metaclass=DcSingleton):
         workflow_graph.add_node("validator", self.validator_node)
 
         # Set entry point and define edges
-        logger.info("Setting entry point to 'file_parser' node")
         workflow_graph.set_entry_point("file_parser")
         workflow_graph.add_edge("file_parser", "brain")
 
-        logger.info("Adding conditional edges for context_builder")
+        logger.debug("Adding conditional edges for context_builder")
         workflow_graph.add_conditional_edges(
             "context_builder", 
             self.context_router, 
             {"tools": "tools", "brain": "brain", END: END}
         )
 
-        logger.info("Adding conditional edges for brain node")
+        # logger.info("Adding conditional edges for brain node")
         workflow_graph.add_conditional_edges(
             "brain",
             self.should_continue,

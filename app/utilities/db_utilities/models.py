@@ -150,7 +150,7 @@ class AuditLog(Base):
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
     resource_id = Column(String(255), nullable=True)
-    metadata = Column(Text, nullable=True)  # JSON string
+    action_metadata = Column(Text, nullable=True)  # JSON string - renamed from 'metadata' (reserved by SQLAlchemy)
     ip_address = Column(String(45), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
     
@@ -165,7 +165,7 @@ class AuditLog(Base):
             'action': self.action,
             'resource_type': self.resource_type,
             'resource_id': self.resource_id,
-            'metadata': self.metadata,
+            'action_metadata': self.action_metadata,
             'ip_address': self.ip_address,
             'created_at': self.created_at
         }
