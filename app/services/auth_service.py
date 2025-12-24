@@ -1,7 +1,10 @@
 """
-Authentication Helper - Centralized authentication management
+Authentication Service - Centralized authentication and authorization management
+
+Consolidates authentication utilities, token management, password hashing,
+and user validation. Provides FastAPI dependencies for route protection.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -18,20 +21,20 @@ from app.utilities import dc_logger
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
-# Get SQLite database instance
-sqlite_db = SQLiteImplement(
-    db_path=Constants.fetch_constant("sqlite_db")["db_path"],
-    max_pool_size=Constants.fetch_constant("sqlite_db")["max_pool_size"]
-)
 
-
-class AuthManager(metaclass=DcSingleton):
+class AuthService(metaclass=DcSingleton):
     """
-    Handles authentication, token creation, validation, and user resolution.
+    Centralized authentication service handling:
+    - Password hashing and verification
+    - JWT token creation and validation
+    - User authentication and authorization
+    - FastAPI dependency injection for protected routes
+    
     Singleton pattern ensures consistent auth configuration across the app.
     """
 
     def __init__(self):
+        """Initialize authentication service with JWT config and password hashing"""
         # Load JWT settings from constants
         jwt_config = Constants.fetch_constant("jwt")
         self.secret_key = jwt_config.get("secret_key", "your-secret-key-change-in-production")
@@ -44,17 +47,49 @@ class AuthManager(metaclass=DcSingleton):
         # HTTP Bearer security scheme for Swagger UI
         self.security = HTTPBearer()
         
+        # Initialize SQLite database
+        sqlite_config = Constants.fetch_constant("sqlite_db")
+        self.sqlite_db = SQLiteImplement(
+            db_path=sqlite_config["db_path"],
+            max_pool_size=sqlite_config["max_pool_size"]
+        )
+        
         # Store singleton instance for static method access
-        AuthManager._instance = self
-        logger.info(f"AuthManager initialized with algorithm={self.algorithm}")
+        AuthService._instance = self
+        logger.info(f"AuthService initialized with algorithm={self.algorithm}, expire={self.access_token_expire_minutes}min")
+
+    # ==================== Password Management ====================
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Verify plain password against its hash."""
+        """
+        Verify plain password against its hash.
+        
+        Args:
+            plain_password: Plain text password from user
+            hashed_password: Bcrypt hashed password from database
+            
+        Returns:
+            True if password matches, False otherwise
+        """
         return self.pwd_context.verify(plain_password, hashed_password)
 
     def get_password_hash(self, password: str) -> str:
-        """Hash the password using bcrypt."""
+        """
+        Hash a password using bcrypt.
+        
+        Args:
+            password: Plain text password to hash
+            
+        Returns:
+            Bcrypt hashed password string
+        """
         return self.pwd_context.hash(password)
+
+    def hash_password(self, password: str) -> str:
+        """Alias for get_password_hash() for backward compatibility"""
+        return self.get_password_hash(password)
+
+    # ==================== Token Management ====================
 
     def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None) -> str:
         """
@@ -66,11 +101,15 @@ class AuthManager(metaclass=DcSingleton):
             
         Returns:
             Encoded JWT token string
+            
+        Example:
+            token = auth_service.create_access_token({"sub": user.id, "email": user.email})
         """
         to_encode = data.copy()
-        expire = datetime.utcnow() + (expires_delta or timedelta(minutes=self.access_token_expire_minutes))
+        expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=self.access_token_expire_minutes))
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
+        logger.debug(f"Created token for user: {data.get('sub')}")
         return encoded_jwt
 
     @staticmethod
@@ -82,18 +121,54 @@ class AuthManager(metaclass=DcSingleton):
             token: JWT token string
             
         Returns:
-            Decoded payload dictionary
+            Decoded payload dictionary with user data
             
         Raises:
             JWTError: If token is invalid or expired
         """
         try:
-            instance = AuthManager._instance
+            instance = AuthService._instance
             payload = jwt.decode(token, instance.secret_key, algorithms=[instance.algorithm])
             return payload
-        except JWTError as e:
-            logger.warning(f"Token decode failed: {str(e)}")
+        except jwt.ExpiredSignatureError:
+            logger.warning("Token has expired")
+            raise JWTError("Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Invalid token: {str(e)}")
             raise JWTError(f"Invalid token: {str(e)}")
+
+    # ==================== User Authentication ====================
+
+    def authenticate_user(self, email: str, password: str) -> Optional[User]:
+        """
+        Authenticate a user by email and password.
+        
+        Args:
+            email: User email address
+            password: Plain text password
+            
+        Returns:
+            User object if authentication successful, None otherwise
+        """
+        with self.sqlite_db.get_session() as session:
+            user = session.query(User).filter(User.email == email).first()
+            
+            if not user:
+                logger.warning(f"Authentication failed: User not found for email {email}")
+                return None
+            
+            if not self.verify_password(password, user.password_hash):
+                logger.warning(f"Authentication failed: Invalid password for email {email}")
+                return None
+            
+            if not user.is_active:
+                logger.warning(f"Authentication failed: User account inactive for email {email}")
+                return None
+            
+            logger.info(f"User authenticated successfully: {email}")
+            return user
+
+    # ==================== FastAPI Dependencies ====================
 
     @staticmethod
     def get_current_user(
@@ -104,7 +179,9 @@ class AuthManager(metaclass=DcSingleton):
         Works like a JWT filter - validates token and retrieves user from database.
         
         Usage in routes:
-            current_user: User = Depends(AuthManager.get_current_user)
+            @router.get("/protected")
+            async def protected_route(current_user: User = Depends(AuthService.get_current_user)):
+                return {"user": current_user.email}
         
         Args:
             credentials: HTTP Bearer token from Authorization header
@@ -123,7 +200,7 @@ class AuthManager(metaclass=DcSingleton):
         )
 
         try:
-            payload = AuthManager.decode_access_token(token)
+            payload = AuthService.decode_access_token(token)
             user_id: str = payload.get("sub")
             if user_id is None:
                 raise credentials_exception
@@ -131,10 +208,15 @@ class AuthManager(metaclass=DcSingleton):
             raise credentials_exception
 
         # Query user from database
-        with sqlite_db.get_session() as session:
+        instance = AuthService._instance
+        with instance.sqlite_db.get_session() as session:
             user = session.query(User).filter(User.id == user_id).first()
             if user is None:
                 logger.warning(f"User not found for id: {user_id}")
+                raise credentials_exception
+            
+            if not user.is_active:
+                logger.warning(f"Inactive user attempted access: {user_id}")
                 raise credentials_exception
 
         return user
@@ -145,7 +227,7 @@ class AuthManager(metaclass=DcSingleton):
         Dependency to get only the current user's ID.
         
         Usage in routes:
-            user_id: str = Depends(AuthManager.get_current_user_id)
+            user_id: str = Depends(AuthService.get_current_user_id)
         
         Args:
             current_user: User object from get_current_user dependency
@@ -161,9 +243,14 @@ class AuthManager(metaclass=DcSingleton):
     ) -> Optional[User]:
         """
         Optional authentication - returns user if token is provided and valid, None otherwise.
+        Useful for endpoints that work differently for authenticated vs anonymous users.
         
         Usage in routes:
-            current_user: Optional[User] = Depends(AuthManager.get_current_user_optional)
+            @router.get("/optional")
+            async def optional_route(current_user: Optional[User] = Depends(AuthService.get_current_user_optional)):
+                if current_user:
+                    return {"message": f"Hello {current_user.email}"}
+                return {"message": "Hello guest"}
         
         Args:
             credentials: Optional HTTP Bearer token
@@ -176,21 +263,34 @@ class AuthManager(metaclass=DcSingleton):
 
         try:
             token = credentials.credentials
-            payload = AuthManager.decode_access_token(token)
+            payload = AuthService.decode_access_token(token)
             user_id: str = payload.get("sub")
             
             if user_id is None:
                 return None
 
             # Query user from database
-            with sqlite_db.get_session() as session:
+            instance = AuthService._instance
+            with instance.sqlite_db.get_session() as session:
                 user = session.query(User).filter(User.id == user_id).first()
-                return user
+                if user and user.is_active:
+                    return user
+                return None
                 
         except (JWTError, Exception) as e:
             logger.debug(f"Optional auth failed: {str(e)}")
             return None
 
+    # ==================== Utility Methods ====================
 
-# Create singleton instance
-auth_manager = AuthManager()
+    @staticmethod
+    def get_instance() -> 'AuthService':
+        """
+        Get the singleton instance of AuthService.
+        
+        Returns:
+            AuthService instance
+        """
+        if not hasattr(AuthService, '_instance'):
+            AuthService()
+        return AuthService._instance

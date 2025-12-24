@@ -10,7 +10,7 @@ from app.utilities.constants import Constants
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
 from app.utilities.db_utilities.models import Project, Version, ProjectPermission, User
-from app.utilities.auth_helper import AuthManager
+from app.services.auth_service import AuthService
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -31,7 +31,7 @@ sqlite_client = SQLiteImplement(
 @router.post("/")
 async def create_version(
     request: VersionCreateRequest,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Create a new version under a project (requires owner/editor permission)"""
     logger.info(f"Creating version: {request.version_name} for project: {request.project_id}")
@@ -112,7 +112,7 @@ async def create_version(
 
 
 @router.get("/project/{project_id}")
-async def get_versions(project_id: str, current_user: User = Depends(AuthManager.get_current_user)):
+async def get_versions(project_id: str, current_user: User = Depends(AuthService.get_current_user)):
     """Get all versions for a project (requires permission)"""
     user_id = current_user.id
     logger.info(f"Fetching versions for project: {project_id}")
@@ -183,7 +183,7 @@ async def get_versions(project_id: str, current_user: User = Depends(AuthManager
 
 
 @router.get("/{version_id}")
-async def get_version_detail(version_id: str, current_user: User = Depends(AuthManager.get_current_user)):
+async def get_version_detail(version_id: str, current_user: User = Depends(AuthService.get_current_user)):
     """Get detailed information about a specific version (requires authentication)"""
     user_id = current_user.id
     logger.info(f"Fetching details for version: {version_id}")
@@ -286,3 +286,4 @@ async def update_version(version_id: str, request: VersionCreateRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "Failed", "message": str(exe)}
         )
+

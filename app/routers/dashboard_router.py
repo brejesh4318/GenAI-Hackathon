@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import BasicAuth
 import httpx
-from app.utilities.auth_helper import AuthManager
+from app.services.auth_service import AuthService
 
 from app.routers.datamodel import JiraPushRequest
 from app.utilities import dc_logger
@@ -53,7 +53,7 @@ async def root():
 
 
 @router.get("/dashboardData")
-async def get_dashboard_data(current_user: User = Depends(AuthManager.get_current_user)):
+async def get_dashboard_data(current_user: User = Depends(AuthService.get_current_user)):
     """Get dashboard statistics (requires authentication)"""
     try:
         compliance_coverage = 0
@@ -114,7 +114,7 @@ async def get_dashboard_data(current_user: User = Depends(AuthManager.get_curren
 @router.post("/uploadFile")
 async def upload_file(
     file: UploadFile = File(...),
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Upload and parse a file (requires authentication)"""
     try:
@@ -135,7 +135,7 @@ async def upload_file(
 @router.get("/export/{project_id}")
 async def export_test_cases(
     project_id: str,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Export test cases to CSV (requires authentication)"""
     try:
@@ -211,7 +211,7 @@ async def export_test_cases(
 @router.post("/jiraPush")
 async def push_jira(
     request: JiraPushRequest,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """
     Push selected test cases from MongoDB to Jira (bulk mode with batching).
@@ -338,3 +338,4 @@ async def push_jira(
     except Exception as e:
         logger.exception("Failed to push to Jira")
         raise HTTPException(status_code=500, detail=str(e))
+

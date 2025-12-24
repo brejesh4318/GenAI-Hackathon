@@ -14,7 +14,7 @@ from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
 from app.utilities.db_utilities.models import Project, Version, ProjectPermission, User
 from app.utilities.helper import Helper
-from app.utilities.auth_helper import AuthManager
+from app.services.auth_service import AuthService
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -42,7 +42,7 @@ sqlite_client = SQLiteImplement(
 @router.post("/")
 async def create_project(
     request: ProjectCreateRequest,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Create a new project (requires authentication)"""
     logger.info(f"Creating project: {request.project_name} by user {current_user.email}")
@@ -97,7 +97,7 @@ async def create_project(
 
 
 @router.get("/")
-async def get_projects(current_user: User = Depends(AuthManager.get_current_user)):
+async def get_projects(current_user: User = Depends(AuthService.get_current_user)):
     """Get all projects (requires authentication)"""
     try:
         user_id = current_user.id
@@ -147,7 +147,7 @@ async def get_projects(current_user: User = Depends(AuthManager.get_current_user
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, current_user: User = Depends(AuthManager.get_current_user)):
+async def get_project(project_id: str, current_user: User = Depends(AuthService.get_current_user)):
     """Get project details by ID (requires authentication)"""
     user_id = current_user.id
     try:
@@ -204,3 +204,4 @@ async def get_project(project_id: str, current_user: User = Depends(AuthManager.
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "Failed", "message": str(exe)}
         )
+

@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import timedelta
 from app.routers.datamodel import UserRegisterRequest, UserLoginRequest, ProjectPermissionRequest
 from app.utilities import dc_logger
-from app.utilities.auth_helper import AuthManager
+from app.services.auth_service import AuthService
 from app.utilities.constants import Constants
 from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
 from app.utilities.db_utilities.models import User, ProjectPermission
@@ -30,8 +30,8 @@ sqlite_client = SQLiteImplement(
 )
 logger.info("SQLite client initialized for auth")
 
-# Initialize AuthManager
-auth_manager = AuthManager()
+# Initialize AuthService
+auth_service = AuthService()
 
 
 @router.post("/register")
@@ -53,7 +53,7 @@ async def register_user(request: UserRegisterRequest):
             )
         
         # Hash password and create user
-        hashed_pw = auth_manager.get_password_hash(request.password)
+        hashed_pw = auth_service.get_password_hash(request.password)
         new_user = User(
             email=request.email,
             password_hash=hashed_pw,
@@ -66,7 +66,7 @@ async def register_user(request: UserRegisterRequest):
             logger.info(f"User registered successfully: {user_id}")
             
             # Create access token
-            access_token = auth_manager.create_access_token(
+            access_token = auth_service.create_access_token(
                 data={"sub": user_id, "email": request.email}
             )
             
@@ -120,14 +120,14 @@ async def login_user(request: UserLoginRequest):
             )
         
         # Verify password
-        if not auth_manager.verify_password(request.password, user.password_hash):
+        if not auth_service.verify_password(request.password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"status": "Failed", "message": "Incorrect email or password"}
             )
         
         # Create access token
-        access_token = auth_manager.create_access_token(
+        access_token = auth_service.create_access_token(
             data={"sub": user.id, "email": user.email}
         )
         
@@ -158,7 +158,7 @@ async def login_user(request: UserLoginRequest):
 
 
 @router.get("/me")
-async def get_current_user_info(current_user: User = Depends(AuthManager.get_current_user)):
+async def get_current_user_info(current_user: User = Depends(AuthService.get_current_user)):
     """Get current user information from token"""
     try:
         user_id = current_user.id
@@ -195,7 +195,7 @@ async def get_current_user_info(current_user: User = Depends(AuthManager.get_cur
 @router.post("/project-permission")
 async def grant_project_permission(
     request: ProjectPermissionRequest,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """
     Grant project access to another user
@@ -273,7 +273,7 @@ async def grant_project_permission(
 @router.get("/project-permissions/{project_id}")
 async def get_project_permissions(
     project_id: str,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Get all users with access to a project"""
     try:
@@ -320,3 +320,4 @@ async def get_project_permissions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "Failed", "message": str(exe)}
         )
+

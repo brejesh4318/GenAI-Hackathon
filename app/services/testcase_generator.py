@@ -1,11 +1,11 @@
-from app.services.llm_services.graph_pipeline import GraphPipe
+from app.services.testcase_service.graph_pipeline import GraphPipe
 from app.services.llm_services.llm_interface import LLMInterface
 from app.services.reponse_format import FinalOutput
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.runnables import RunnableConfig
 from app.utilities import dc_logger
 from app.utilities.singletons_factory import DcSingleton
-from app.services.llm_services.graph_state import AgentState
+from app.services.testcase_service.graph_state import AgentState
 
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})

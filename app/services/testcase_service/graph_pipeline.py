@@ -10,16 +10,15 @@ from langgraph.types import interrupt, Command
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.services.prompt_fetch import PromptFetcher
+from app.services.prompt_service import PromptService
 from app.utilities import dc_logger
 from app.utilities.helper import Helper
 from app.utilities.constants import Constants
-from app.utilities.document_parser import DocumentParser
 from app.services.llm_services.llm_interface import LLMInterface 
 from app.services.reponse_format import AgentFormat, FinalOutput
 from app.utilities.singletons_factory import DcSingleton
-from app.services.llm_services.graph_state import AgentState, PipelineState
-from app.services.llm_services.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
+from app.services.testcase_service.graph_state import AgentState, PipelineState
+from app.services.testcase_service.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
 from app.services.req_extract_service.requirements_extractor import RequirementsExtractor
@@ -28,11 +27,11 @@ import sqlite3
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 conn = sqlite3.connect('langchain.db', check_same_thread=False)
 memory = SqliteSaver(conn)
-parser = DocumentParser()
-fetch_prompt = PromptFetcher()
-# Fetch prompts from Langfuse with production labels
-validation_agent_prompt = fetch_prompt.fetch("validator-agent")
-test_case_generator_prompt = fetch_prompt.fetch("test-case-generator")
+# parser = DocumentParser()
+prompt_service = PromptService()
+# Fetch prompts from Langfuse at startup
+validation_agent_prompt = prompt_service.get("validator-agent")
+test_case_generator_prompt = prompt_service.get("test-case-generator")
 # deep_extractor = RequirementsExtractor()
 deep_extractor = RequirementsExtractor(pages_per_chunk=10)
 class GraphPipe(metaclass=DcSingleton):
@@ -192,7 +191,7 @@ class GraphPipe(metaclass=DcSingleton):
         logger.info("--- Executing Brain Node ---")
         
         # Fetch brain orchestrator prompt from Langfuse
-        brain_prompt_template = fetch_prompt.fetch("brain-orchestrator-agent")
+        brain_prompt_template = prompt_service.get("brain-orchestrator-agent")
         
         user_request = state.get("user_request", "")
         formatted_prompt = brain_prompt_template.format(
@@ -221,7 +220,7 @@ class GraphPipe(metaclass=DcSingleton):
             images = state.get("images", [])
             
             # Fetch context builder prompt from Langfuse
-            context_prompt = fetch_prompt.fetch("context-builder-agent")
+            context_prompt = prompt_service.get("context-builder-agent")
             system_prompt = SystemMessage(content=context_prompt)
             
             llm = self.llm.get_llm()

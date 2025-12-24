@@ -1,4 +1,5 @@
-from logging import getLogger, INFO, Formatter, LoggerAdapter, StreamHandler, FileHandler
+from logging import getLogger, INFO, Formatter, LoggerAdapter, StreamHandler
+from logging.handlers import RotatingFileHandler
 from colorlog import ColoredFormatter
 from app.utilities.constants import Constants
 import os
@@ -27,8 +28,13 @@ def get_logger(name, level=INFO, file_name = Constants.fetch_constant("log_confi
     )
     console_handler.setFormatter(colored_formatter)
     
-    # File handler without colors (for log files)
-    file_handler = FileHandler(file_name)
+    # Rotating file handler (max 10MB per file, keep 5 backup files)
+    file_handler = RotatingFileHandler(
+        file_name,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,  # Keep 5 backup files
+        encoding='utf-8'
+    )
     file_format = " %(levelname)s : %(asctime)s %(filename)s:%(lineno)d %(funcName)s --> %(message)s"
     file_formatter = Formatter(file_format, datefmt='%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(file_formatter)

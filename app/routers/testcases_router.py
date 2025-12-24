@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile,
 from fastapi.responses import JSONResponse
 
 from app.services.testcase_generator import TestCaseGenerator
-from app.utilities.auth_helper import AuthManager
+from app.services.auth_service import AuthService
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from app.utilities.env_util import EnvironmentVariableRetriever
@@ -19,7 +19,7 @@ from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
 from app.utilities.db_utilities.models import Project, Version, ProjectPermission, User
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
-from app.services.llm_services.graph_pipeline import GraphPipe, memory
+from app.services.testcase_service.graph_pipeline import GraphPipe, memory
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -56,7 +56,7 @@ testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
 async def get_testcases(
     project_id: str,
     version_id: Optional[str] = None,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Get all test cases for a project (requires authentication)"""
     try:
@@ -142,7 +142,7 @@ async def get_testcases(
 @router.get("/{testcase_id}")
 async def get_testcase_detail(
     testcase_id: str,
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Get detailed information about a specific test case (requires authentication)"""
     user_id = current_user.id
@@ -216,7 +216,7 @@ async def generate_testcases(
     version_id: Optional[str] = Form(None),
     command: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
-    current_user: User = Depends(AuthManager.get_current_user)
+    current_user: User = Depends(AuthService.get_current_user)
 ):
     """Generate test cases from document upload (requires owner/editor permission)"""
     filename = None
@@ -381,3 +381,4 @@ async def generate_testcases(
                     logger.info(f"Removed temp file: {tmp_path}")
         except Exception:
             logger.exception("Failed to remove temp file in finally block")
+

@@ -10,6 +10,14 @@ llm_model:
 
 deep_file_extractor: true
 
+# Prompt names to fetch at startup (Langfuse)
+prompt_names:
+  - "brain-orchestrator-agent"
+  - "compliance-researcher-agent"
+  - "context-builder-agent"
+  - "validator-agent"
+  - "test-case-generator"
+
 jwt:
   secret_key: "your-secret-key-change-in-production-use-env-variable"
   algorithm: "HS256"
@@ -73,144 +81,4 @@ prompts:
               If compliance information applies to a requirement, explicitly link test cases to compliance criteria.
               Where requirements are ambiguous, propose multiple possible test cases.
               Maintain clarity, consistency, and a structured numbering for test IDs."
-
-  # validation_agent: """ **You are a QA Test Case Validator and Requirements Traceability Analyst.** Your primary task is to validate test cases generated from a Product Requirement Document (PRD), functionality documents, and compliance requirements, and to ensure each test case is traced back to a specific requirement.
-
-  #           **Inputs:**
-
-  #           *   **Product Document (`{document}`):** The source document containing the product requirements, functional specifications, and user stories.
-  #           *   **Generated Test Cases (`{llm_output}`):** The set of test cases designed with compliance information that needs validation.
-
-  #           **Validation Scope & Traceability:**
-
-  #           1.  **Map Requirement ID & Description:**
-  #               *   From the **Product Document (`{document}`)**, identify and extract key functional and non-functional requirements.
-  #               *   For each identified requirement, generate a unique `requirement_id` (e.g., REQ-001, REQ-002) and write a concise `requirement_description`.
-
-  #           2.  **Comprehensive Test Case Coverage:**
-  #               *   Ensure the generated test cases in **`{llm_output}`** cover all essential categories: **Functional, Negative, Edge, Performance, Security, and Compliance.**
-  #               *   If any category is missing, generate new test cases to fill the gap.
-
-  #           3.  **Test Case Schema Validation:**
-  #               *   Verify that each test case strictly adheres to the specified schema, including all required fields.
-
-  #           4.  **Identify and Remediate Gaps:**
-  #               *   Pinpoint and correct any of the following issues:
-  #                   *   **Missing Categories:** Add test cases for any uncovered testing categories.
-  #                   *   **Vague Wording:** Rewrite unclear test case steps or descriptions for clarity.
-  #                   *   **Missing Expected Results:** Define precise and measurable expected outcomes.
-  #                   *   **Unclear Priority:** Assign a logical priority based on the guidelines below.
-
-  #           5.  **Detect and Consolidate Duplicates:**
-  #               *   Identify and merge any duplicate or significantly overlapping test cases to create a streamlined and efficient test suite.
-
-  #           6.  **Suggest Improvements:**
-  #               *   Enhance incomplete or ambiguous test cases by adding more detail, refining steps, or clarifying objectives.
-
-  #           7.  **Validate and Map Compliance Coverage:**
-  #               *   Map the relevant compliance reference (e.g., GDPR, HIPAA, IEC-62304) to each test case where applicable.
-  #               *   If no compliance standard is relevant, leave the compliance reference field empty.
-
-  #           **Output Format:**
-
-  #           Return the validation results strictly as a list of JSON objects in the following format. Include only the validated, corrected, and newly generated test cases.
-  #                   ```json
-  #                   [
-  #                     {
-  #                       "test_case_id": "TC-XXX",
-  #                       "requirement_id": "REQ-XXX",
-  #                       "requirement_description": "A concise description of the requirement being tested.",
-  #                       "category": "Functional | Negative | Edge | Performance | Security | Compliance",
-  #                       "priority": "Critical | High | Medium | Low",
-  #                       "description": "A clear and detailed description of the test case.",
-  #                       "steps": [
-  #                         "Step 1: ...",
-  #                         "Step 2: ...",
-  #                         "Step 3: ..."
-  #                       ],
-  #                       "expected_result": "A clear and measurable expected outcome.",
-  #                       "compliance_reference": "e.g., GDPR Article 32, HIPAA § 164.312(a)(1), or empty"
-  #                     }
-  #                   ]
-  #                   ```
-  #                   **Guidelines:**
-  #                   *   **Traceability is Key:** Every test case **must** be mapped to a `requirement_id` and `requirement_description` derived from the **`{document}`**.
-  #                   *   **Clarity and Consistency:** Ensure all fields are clear, consistent, and complete across the entire test suite.
-  #                   *   **Logical Priority Assignment:**
-  #                       *   **Critical:** Security threats, authentication flaws, compliance breaches, and data integrity risks.
-  #                       *   **High:** Core product features and essential performance benchmarks.
-  #                       *   **Medium:** Important but non-blocking functionality and scenarios.
-  #                       *   **Low:** Minor UI/UX issues or optional features.
-  #                       """
-  
-  # compliance_agent1: "You are a Compliance Expert Agent in healthcare industry.
-  #                     Your task is to analyze the provided product/process document and identify relevant compliance requirements.
-  #                     You must summarize the document in a way that helps the next agent (who has access to RAG and web search tools) efficiently retrieve authoritative compliance details.
-          
-  #                     Inputs:
-  #                     Product Document: {process_document}
-  #                     Available Standards: {standards}
-  #                     Instructions:
-
-  #                     Summarize the Document:
-  #                     Provide a clear, concise summary of the product/process described.
-  #                     Highlight features, processes, or risks relevant to compliance.
-                      
-  #                     Relevant Requirements:
-  #                     Identify compliance requirements for this product/process.
-  #                     Select applicable standards from the provided list ({standards}).
-  #                     Multiple standards can be chosen if relevant.
-
-  #                     Guidance for Next Agent:
-  #                     For each selected standard, specify which sections, controls, or requirements are likely relevant (e.g., data security, privacy, safety, accessibility).
-  #                     Keep the guidance simple and actionable, avoiding long explanations.
-  #                     Focus on what needs to be retrieved from the standard, not the full details.
-
-  #                     Output Format:
-  #                     Document Summary
-  #                     Relevant Standards (selected from list)
-  #                     Compliance Requirements Needed from Standards"
-
-  # compliance_agent2: "
-  #           You are a compliance research assistant to retrieve relevant documents to query get compliance requirements and generate output
-  #           Your task is to take the structured compliance output from the first agent (Relevant Requirements, Compliance Plan) and enrich it with authoritative compliance details using the tools provided.
-
-  #           Input:
-  #           - Relevant Requirements: List of specific compliance requirements identified by Compliance Expert Agent.
-
-  #           Instructions:
-  #           Use Given Tools to get relevant compliance
-  #           Run RAG Tool:
-  #           Rag should be suitable to fetch details from documents in vector store.
-  #           Send each query to the RAG tool. Rag has access to FDA and IEC 62304 standards.
-  #           Tool will return results in the format:
-  #             query: <query text>,
-  #               filter: <standard name>,
-  #               results: []
-  #           3. Fallback with Websearch Tool:
-  #           If RAG results are empty or irrelevant, run the same query with the Websearch tool.
-  #           Collect compliance details such as clause, requirement text, and official descriptions.
-            
-  #           4. Produce Final Output:
-  #           For each enriched requirement, generate a structured compliance entry:
-
-  #           Enriched Compliance Requirements:
-  #           - Standard Name: [FDA / IEC 62304 / ISO 13485 / ISO 27001]
-  #           - Clause/ID: [e.g., 21 CFR Part 11.10, IEC 62304 A.9.2.1]
-  #           - Requirement Title: [Short descriptive title]
-  #           - Requirement Text: [Generate based on retrieved info from RAG or Websearch]
-  #           - Relevance Note: [Why it applies, based on extracted context from Agent 1]
-  #           "
-
-            # 1. Generate Queries:
-            # For each requirement under Relevant Requirements, generate a precise search query.
-            # Each query must include:
-            # - Requirement or clause identifier (if available)
-            # - Standard name (must be from the set: FDA, IEC 62304)
-            # - Relevant keywords from the requirement description
-
-            # each query for the RAG tool:
-            # query: <query text>,
-            # filter: <standard name>
-
 
