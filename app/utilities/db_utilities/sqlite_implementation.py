@@ -40,7 +40,8 @@ class SQLiteImplement(metaclass=DcSingleton):
         self.SessionLocal = scoped_session(sessionmaker(
             autocommit=False,
             autoflush=False,
-            bind=self.engine
+            bind=self.engine,
+            expire_on_commit=False  # Prevent lazy loading issues after commit
         ))
         
         logger.info(f"SQLAlchemy engine initialized for {db_path}")

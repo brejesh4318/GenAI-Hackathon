@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, validate_call, EmailStr
 from typing import List, Optional
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime
 
 
@@ -22,7 +21,7 @@ class ProjectCreateRequest(BaseModel):
 
 
 class VersionCreateRequest(BaseModel):
-    project_id: str = Field(..., description="ID of the parent project")
+    project_id: int = Field(..., description="ID of the parent project")
     version_name: str = Field(..., description="Version name (e.g., v1.0, v2.0)")
     description: Optional[str] = Field(None, description="Description of the version")
     is_active: Optional[bool] = Field(True, description="Whether this version is active")

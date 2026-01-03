@@ -44,7 +44,7 @@ async def root():
 
 
 # Create subapi and mount all routers
-subapi = FastAPI()
+subapi = FastAPI(title = "Dash-Test API", version = "v1")
 subapi.include_router(auth_router.router)  # /auth/* (login, register)
 subapi.include_router(dashboard_router.router)  # Root endpoints (/, /dashboardData, etc.)
 subapi.include_router(projects_router.router)  # /projects/*

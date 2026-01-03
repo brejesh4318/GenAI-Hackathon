@@ -15,7 +15,7 @@ from httpx import BasicAuth
 
 from datetime import datetime
 from app.routers.datamodel import ProjectCreateRequest, VersionCreateRequest
-from app.services.testcase_generator import TestCaseGenerator
+from app.services.testcase_service.testcase_generator import TestCaseGenerator
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from app.utilities.env_util import EnvironmentVariableRetriever
@@ -24,7 +24,7 @@ from app.utilities.db_utilities.sqlite_implementation import SQLiteImplement
 from app.utilities.db_utilities.models import Project, Version
 from app.utilities.helper import Helper
 from app.services.llm_services.llm_factory import LlmFactory
-from app.services.llm_services.graph_pipeline import GraphPipe, memory
+from app.services.testcase_service.graph_pipeline import GraphPipe, memory
 from app.routers.datamodel import JiraPushRequest
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})

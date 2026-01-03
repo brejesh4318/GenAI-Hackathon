@@ -6,25 +6,19 @@ from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, Text, TIMES
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-import uuid
 
 Base = declarative_base()
-
-
-def generate_uuid():
-    """Generate UUID as string"""
-    return str(uuid.uuid4())
 
 
 class Project(Base):
     """Project model - stores project metadata"""
     __tablename__ = 'projects'
     
-    id = Column(String(36), primary_key=True, default=generate_uuid)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_name = Column(String(255), nullable=False, unique=True)
     description = Column(Text, nullable=True)
-    owner_id = Column(String(36), nullable=True)
-    organization_id = Column(String(36), nullable=True)
+    owner_id = Column(Integer, nullable=True)
+    organization_id = Column(Integer, nullable=True)
     no_test_cases = Column(Integer, default=0)
     no_documents = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, server_default=func.now())
@@ -33,6 +27,11 @@ class Project(Base):
     # Relationships
     versions = relationship("Version", back_populates="project", cascade="all, delete-orphan")
     permissions = relationship("ProjectPermission", back_populates="project", cascade="all, delete-orphan")
+    
+    # Prevent ID reuse after deletion
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -53,8 +52,8 @@ class Version(Base):
     """Version model - stores version information under projects"""
     __tablename__ = 'versions'
     
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    project_id = Column(String(36), ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
     version_name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
@@ -66,7 +65,7 @@ class Version(Base):
     # Relationships
     project = relationship("Project", back_populates="versions")
     
-    # Unique constraint on project_id + version_name
+    # Prevent ID reuse after deletion
     __table_args__ = (
         {'sqlite_autoincrement': True},
     )
@@ -90,7 +89,7 @@ class User(Base):
     """User model - stores user accounts"""
     __tablename__ = 'users'
     
-    id = Column(String(36), primary_key=True, default=generate_uuid)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=True)
@@ -101,6 +100,11 @@ class User(Base):
     # Relationships
     permissions = relationship("ProjectPermission", back_populates="user", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user")
+    
+    # Prevent ID reuse after deletion
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
     
     def to_dict(self):
         """Convert model to dictionary (excluding password)"""
@@ -118,16 +122,21 @@ class ProjectPermission(Base):
     """Project permissions model - manages access control"""
     __tablename__ = 'project_permissions'
     
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    project_id = Column(String(36), ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
-    user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     permission_level = Column(String(50), nullable=False)  # owner, editor, viewer
     granted_at = Column(TIMESTAMP, server_default=func.now())
-    granted_by = Column(String(36), nullable=True)
+    granted_by = Column(Integer, nullable=True)
     
     # Relationships
     project = relationship("Project", back_populates="permissions")
     user = relationship("User", back_populates="permissions")
+    
+    # Prevent ID reuse after deletion
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -145,8 +154,8 @@ class AuditLog(Base):
     """Audit log model - tracks user actions"""
     __tablename__ = 'audit_logs'
     
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
     resource_id = Column(String(255), nullable=True)
@@ -156,6 +165,11 @@ class AuditLog(Base):
     
     # Relationships
     user = relationship("User", back_populates="audit_logs")
+    
+    # Prevent ID reuse after deletion
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
     
     def to_dict(self):
         """Convert model to dictionary"""

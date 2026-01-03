@@ -1,10 +1,8 @@
     
 
 from datetime import datetime
-from pathlib import Path
 from typing import Tuple, List
 from app.utilities import dc_logger
-from app.utilities.constants import Constants
 from app.utilities.singletons_factory import DcSingleton
 from app.utilities.document_parser_depreceated import DocumentParser
 import os

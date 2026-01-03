@@ -9,7 +9,8 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from jose import JWTError, jwt, exceptions
+import jose
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -129,13 +130,17 @@ class AuthService(metaclass=DcSingleton):
         try:
             instance = AuthService._instance
             payload = jwt.decode(token, instance.secret_key, algorithms=[instance.algorithm])
+            payload["sub"] = str(payload["sub"])  # Ensure sub is string
             return payload
-        except jwt.ExpiredSignatureError:
+        except exceptions.ExpiredSignatureError:
             logger.warning("Token has expired")
             raise JWTError("Token has expired")
-        except jwt.InvalidTokenError as e:
+        except exceptions.JWTError as e:
             logger.warning(f"Invalid token: {str(e)}")
             raise JWTError(f"Invalid token: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error decoding token: {str(e)}")
+            raise JWTError(f"Error decoding token: {str(e)}")   
 
     # ==================== User Authentication ====================
 
@@ -165,6 +170,8 @@ class AuthService(metaclass=DcSingleton):
                 logger.warning(f"Authentication failed: User account inactive for email {email}")
                 return None
             
+            # Expunge user from session before returning
+            session.expunge(user)
             logger.info(f"User authenticated successfully: {email}")
             return user
 
@@ -218,6 +225,9 @@ class AuthService(metaclass=DcSingleton):
             if not user.is_active:
                 logger.warning(f"Inactive user attempted access: {user_id}")
                 raise credentials_exception
+            
+            # Expunge user from session so it can be used outside the context
+            session.expunge(user)
 
         return user
 
@@ -274,6 +284,8 @@ class AuthService(metaclass=DcSingleton):
             with instance.sqlite_db.get_session() as session:
                 user = session.query(User).filter(User.id == user_id).first()
                 if user and user.is_active:
+                    # Expunge user from session so it can be used outside the context
+                    session.expunge(user)
                     return user
                 return None
                 

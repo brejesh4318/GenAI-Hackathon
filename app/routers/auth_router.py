@@ -67,7 +67,7 @@ async def register_user(request: UserRegisterRequest):
             
             # Create access token
             access_token = auth_service.create_access_token(
-                data={"sub": user_id, "email": request.email}
+                data={"sub": str(user_id), "email": request.email}
             )
             
             return JSONResponse(
@@ -128,7 +128,7 @@ async def login_user(request: UserLoginRequest):
         
         # Create access token
         access_token = auth_service.create_access_token(
-            data={"sub": user.id, "email": user.email}
+            data={"sub": str(user.id), "email": user.email}
         )
         
         logger.info(f"User logged in successfully: {user.id}")

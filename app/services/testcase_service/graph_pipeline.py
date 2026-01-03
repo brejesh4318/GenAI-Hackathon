@@ -15,7 +15,7 @@ from app.utilities import dc_logger
 from app.utilities.helper import Helper
 from app.utilities.constants import Constants
 from app.services.llm_services.llm_interface import LLMInterface 
-from app.services.reponse_format import AgentFormat, FinalOutput
+from app.services.llm_services.reponse_format import AgentFormat, FinalOutput
 from app.utilities.singletons_factory import DcSingleton
 from app.services.testcase_service.graph_state import AgentState, PipelineState
 from app.services.testcase_service.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
@@ -32,7 +32,6 @@ prompt_service = PromptService()
 # Fetch prompts from Langfuse at startup
 validation_agent_prompt = prompt_service.get("validator-agent")
 test_case_generator_prompt = prompt_service.get("test-case-generator")
-# deep_extractor = RequirementsExtractor()
 deep_extractor = RequirementsExtractor(pages_per_chunk=10)
 class GraphPipe(metaclass=DcSingleton):
 

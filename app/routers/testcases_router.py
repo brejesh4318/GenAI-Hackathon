@@ -9,7 +9,7 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, status, Request, Form, UploadFile, File, Depends
 from fastapi.responses import JSONResponse
 
-from app.services.testcase_generator import TestCaseGenerator
+from app.services.testcase_service.testcase_generator import TestCaseGenerator
 from app.services.auth_service import AuthService
 from app.utilities import dc_logger
 from app.utilities.constants import Constants
@@ -54,8 +54,8 @@ testcase_collection = Constants.fetch_constant("mongo_collections")["testcases"]
 
 @router.get("/project/{project_id}")
 async def get_testcases(
-    project_id: str,
-    version_id: Optional[str] = None,
+    project_id: int,
+    version_id: Optional[int] = None,
     current_user: User = Depends(AuthService.get_current_user)
 ):
     """Get all test cases for a project (requires authentication)"""
@@ -207,13 +207,13 @@ async def get_testcase_detail(
         )
 
 
-@router.post("/generate/{request_type}/{project_type}")
+@router.post("/generate/{request_type}")
 async def generate_testcases(
     request: Request,
-    project_type: str,
+    
     request_type: str,
-    project_id: str = Form(...),
-    version_id: Optional[str] = Form(None),
+    project_id: int = Form(...),
+    version_id: Optional[int] = Form(None),
     command: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
     current_user: User = Depends(AuthService.get_current_user)

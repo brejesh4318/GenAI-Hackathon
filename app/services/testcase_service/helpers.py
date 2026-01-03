@@ -15,7 +15,7 @@ from app.utilities import dc_logger
 from app.utilities.constants import Constants
 from app.services.llm_services.llm_interface import LLMInterface
 from app.services.testcase_service.graph_state import PipelineState
-from app.services.reponse_format import AgentFormat
+from app.services.llm_services.reponse_format import AgentFormat
 from app.services.prompt_service import PromptService
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
