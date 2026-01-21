@@ -1,11 +1,11 @@
-import json
-import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 from app.utilities.env_util import EnvironmentVariableRetriever
 from app.utilities.helper import Helper
-from app.services.req_extract_service.llm_helpers import extract_requirements_llm_with_context
+from app.services.req_extract_service import utils as req_utils
+from app.services.req_extract_service.storage import RequirementsStorage
+from app.services.req_extract_service import page_processor
 from app.utilities import dc_logger
 from app.utilities.db_utilities.mongo_implementation import MongoImplement
 from app.utilities.constants import Constants
@@ -51,6 +51,13 @@ class RequirementsExtractor(metaclass=DcSingleton):
         self.requirements_collection = collections["requirements"]
         self.document_pages_collection = collections["document_pages"]
         
+        # Initialize storage handler
+        self.storage = RequirementsStorage(
+            mongo_client=self.mongo_client,
+            requirements_collection=self.requirements_collection,
+            document_pages_collection=self.document_pages_collection
+        )
+        
         logger.info(f"Initialized RequirementsExtractor with {pages_per_chunk} pages/chunk, model: {model_name}")
     
     def extract_and_store(
@@ -58,16 +65,18 @@ class RequirementsExtractor(metaclass=DcSingleton):
         file_path: str,
         project_id: str,
         version_id: str,
-        document_name: Optional[str] = None
+        document_name: Optional[str] = None,
+        previous_version_id: Optional[str] = None
     ) -> Dict:
         """
-        Extract requirements from document and store in MongoDB.
+        Extract requirements from document and store in MongoDB with version-aware diffing.
         
         Args:
             file_path (str): Path to document file (PDF, DOCX, TXT, MD)
             project_id (str): UUID from SQLite projects table
             version_id (str): UUID from SQLite versions table
             document_name (str): Optional document name (defaults to filename)
+            previous_version_id (str): UUID of previous version for diffing (None for V1)
         
         Returns:
             Dict: {
@@ -76,11 +85,14 @@ class RequirementsExtractor(metaclass=DcSingleton):
                 "requirements_ids": List[str],  # List of MongoDB ObjectIds
                 "total_pages": int,
                 "total_requirements": int,
+                "diff": Dict,  # Diff summary if previous_version_id provided
+                "generate_tests_for": List[Dict],  # Requirements needing test generation
                 "message": str
             }
         """
         try:
-            logger.info(f"Starting extraction and storage for project_id={project_id}, version_id={version_id}")
+            logger.info(f"Starting extraction for project_id={project_id}, version_id={version_id}, "
+                       f"previous_version_id={previous_version_id}")
             
             # Default document name to filename
             if not document_name:
@@ -94,7 +106,7 @@ class RequirementsExtractor(metaclass=DcSingleton):
             raw_pages_with_hash = self._create_hashed_pages(pages)
             
             # Store raw pages in MongoDB
-            doc_pages_id = self._store_document_pages(
+            doc_pages_id = self.storage.store_document_pages(
                 project_id=project_id,
                 version_id=version_id,
                 document_name=document_name,
@@ -102,27 +114,78 @@ class RequirementsExtractor(metaclass=DcSingleton):
             )
             logger.info(f"Stored document pages with ID: {doc_pages_id}")
             
-            # Extract requirements from pages
-            requirements = self._extract_requirements_from_pages(pages)
-            logger.info(f"Extracted {len(requirements)} requirements")
-            
-            # Store requirements in MongoDB
-            requirement_ids = self._store_requirements(
+            # Extract requirements from pages (with page diffing if previous version exists)
+            requirements = page_processor.process_pages_for_requirements(
                 project_id=project_id,
                 version_id=version_id,
-                document_name=document_name,
-                requirements=requirements
+                pages=pages,
+                hashed_pages=raw_pages_with_hash,
+                previous_version_id=previous_version_id,
+                storage_handler=self.storage,
+                helper=self.helper,
+                model_name=self.model_name,
+                pages_per_chunk=self.pages_per_chunk,
+                page_filter_func=lambda page_dict, prev_ver_id, project_id, version_id: self._should_process_page(
+                    project_id,
+                    version_id,
+                    page_dict["page_hash"],
+                    page_dict["page_no"],
+                    prev_ver_id
+                )
             )
-            logger.info(f"Stored {len(requirement_ids)} requirements in MongoDB")
+            logger.info(f"Extracted {len(requirements)} requirements")
             
-            return {
-                "success": True,
-                "document_pages_id": doc_pages_id,
-                "requirements_ids": requirement_ids,
-                "total_pages": len(pages),
-                "total_requirements": len(requirements),
-                "message": f"Successfully extracted {len(requirements)} requirements from {len(pages)} pages"
-            }
+            # Compare with previous version (if exists)
+            if previous_version_id:
+                diff = self._compare_requirements_with_previous(
+                    requirements, project_id, previous_version_id
+                )
+                
+                # Store only new/modified requirements
+                requirements_to_store = diff["new"] + diff["modified"]
+                requirement_ids = self.storage.store_requirements(
+                    project_id=project_id,
+                    version_id=version_id,
+                    document_name=document_name,
+                    requirements=requirements_to_store
+                )
+                
+                # Mark removed requirements as obsolete
+                self.storage.mark_requirements_obsolete(diff["removed"], version_id)
+                
+                logger.info(f"Stored {len(requirement_ids)} new/modified requirements")
+                
+                return {
+                    "success": True,
+                    "document_pages_id": doc_pages_id,
+                    "requirements_ids": requirement_ids,
+                    "total_pages": len(pages),
+                    "total_requirements": len(requirements),
+                    "diff": diff,
+                    "generate_tests_for": requirements_to_store,
+                    "message": f"Successfully extracted {len(requirements)} requirements: "
+                              f"{len(diff['new'])} new, {len(diff['modified'])} modified, "
+                              f"{len(diff['unchanged'])} unchanged, {len(diff['removed'])} removed"
+                }
+            else:
+                # V1: Store all requirements
+                requirement_ids = self.storage.store_requirements(
+                    project_id=project_id,
+                    version_id=version_id,
+                    document_name=document_name,
+                    requirements=requirements
+                )
+                logger.info(f"Stored {len(requirement_ids)} requirements in MongoDB")
+                
+                return {
+                    "success": True,
+                    "document_pages_id": doc_pages_id,
+                    "requirements_ids": requirement_ids,
+                    "total_pages": len(pages),
+                    "total_requirements": len(requirements),
+                    "generate_tests_for": requirements,
+                    "message": f"Successfully extracted {len(requirements)} requirements from {len(pages)} pages"
+                }
             
         except Exception as e:
             logger.error(f"Error in extract_and_store: {str(e)}", exc_info=True)
@@ -137,344 +200,152 @@ class RequirementsExtractor(metaclass=DcSingleton):
     
     def _create_hashed_pages(self, pages: List[str]) -> List[Dict]:
         """
-        Create page dictionaries with SHA-256 hashes.
+        Create page dictionaries with normalized text and SHA-256 hashes.
         
         Args:
-            pages (List[str]): List of page texts
+            pages (List[str]): List of raw page texts
         
         Returns:
-            List[Dict]: List of page dicts with page_no, raw_text, and page_hash
+            List[Dict]: List of page dicts with page_no, raw_text, normalized_text, page_hash
         """
-        hashed_pages = []
-        
-        for idx, page_text in enumerate(pages):
-            # Calculate SHA-256 hash for this page
-            page_hash = hashlib.sha256(page_text.encode('utf-8')).hexdigest()
-            
-            hashed_pages.append({
-                "page_no": idx + 1,
-                "raw_text": page_text,
-                "page_hash": page_hash
-            })
-        
-        logger.debug(f"Created hashes for {len(hashed_pages)} pages")
-        return hashed_pages
+        return req_utils.create_hashed_pages(pages, self.helper.normalize_text)
     
-    def _store_document_pages(
-        self,
-        project_id: str,
-        version_id: str,
-        document_name: str,
-        pages: List[Dict]
-    ) -> str:
-        """
-        Store raw document pages with hashes in MongoDB.
-        
-        Args:
-            project_id (str): SQLite project UUID
-            version_id (str): SQLite version UUID
-            document_name (str): Name of the document
-            pages (List[Dict]): List of page dicts with page_no, raw_text, page_hash
-        
-        Returns:
-            str: MongoDB ObjectId of inserted document
-        """
-        document_data = {
-            "project_id": project_id,
-            "version_id": version_id,
-            "document_name": document_name,
-            "pages": pages,
-            "total_pages": len(pages),
-            "created_at": datetime.now()
-        }
-        
-        doc_id = self.mongo_client.insert_one(self.document_pages_collection, document_data)
-        logger.info(f"Stored document pages: {document_name} with {len(pages)} pages")
-        return doc_id
-    
-    def _store_requirements(
-        self,
-        project_id: str,
-        version_id: str,
-        document_name: str,
-        requirements: List[Dict]
-    ) -> List[str]:
-        """
-        Store extracted requirements in MongoDB.
-        
-        Args:
-            project_id (str): SQLite project UUID
-            version_id (str): SQLite version UUID
-            document_name (str): Name of the document
-            requirements (List[Dict]): List of requirement dicts
-        
-        Returns:
-            List[str]: List of MongoDB ObjectIds
-        """
-        if not requirements:
-            logger.warning("No requirements to store")
-            return []
-        
-        # Add metadata to each requirement
-        enriched_requirements = []
-        for req in requirements:
-            enriched_req = {
-                "project_id": project_id,
-                "version_id": version_id,
-                "document_name": document_name,
-                "requirement_id": req.get("requirement_id"),
-                "text": req.get("text"),
-                "source_page": req.get("source_page"),
-                "created_at": datetime.now()
-            }
-            enriched_requirements.append(enriched_req)
-        
-        # Bulk insert
-        inserted_ids = self.mongo_client.insert_many(self.requirements_collection, enriched_requirements)
-        logger.info(f"Bulk inserted {len(inserted_ids)} requirements")
-        
-        return [str(obj_id) for obj_id in inserted_ids]
-    
-  
-    def _extract_requirements_from_pages(self, pages: List[str]) -> List[Dict]:
-        """
-        Extract requirements from a list of page texts.
-        
-        Args:
-            pages (List[str]): List of page texts (one string per page)
-        
-        Returns:
-            List[Dict]: List of requirement dicts with requirement_id, text, source_page
-        """
-        logger.info(f"Processing {len(pages)} pages for requirement extraction")
-        
-        # Chunk pages for LLM processing
-        chunks = self._chunk_pages(pages, self.pages_per_chunk)
-        logger.info(f"Created {len(chunks)} chunks ({self.pages_per_chunk} pages/chunk)")
-        
-        # Extract requirements from each chunk
-        all_requirements = []
-        current_req_id = 1
-        
-        for chunk_idx, (chunk_text, page_numbers) in enumerate(chunks):
-            logger.info(f"Processing chunk {chunk_idx + 1}/{len(chunks)} (pages {page_numbers[0]}-{page_numbers[-1]})")
-            
-            try:
-                # Call LLM to extract requirements from this chunk
-                chunk_requirements = self._extract_requirements_via_llm(
-                    chunk_text, 
-                    page_numbers,
-                    current_req_id
-                )
-                
-                # Accumulate requirements
-                all_requirements.extend(chunk_requirements)
-                current_req_id += len(chunk_requirements)
-                
-                logger.info(f"Extracted {len(chunk_requirements)} requirements from chunk {chunk_idx + 1}")
-                
-            except Exception as e:
-                logger.error(f"Error processing chunk {chunk_idx + 1}: {str(e)}", exc_info=True)
-                # Continue processing remaining chunks
-                continue
-        
-        logger.info(f"Total requirements extracted: {len(all_requirements)}")
-        return all_requirements
-    
-    def _chunk_pages(self, pages: List[str], pages_per_chunk: int = 10) -> List[Tuple[str, List[int]]]:
-        """
-        Split pages into chunks for LLM processing with page annotations.
-        
-        Args:
-            pages (List[str]): List of page texts
-            pages_per_chunk (int): Number of pages per chunk (default: 5)
-        
-        Returns:
-            List[Tuple[str, List[int]]]: List of (chunk_text, page_numbers)
-                - chunk_text: Annotated text with page markers
-                - page_numbers: List of page numbers in this chunk (1-indexed)
-        
-        Example:
-            >>> pages = ["Page 1 content", "Page 2 content", "Page 3 content"]
-            >>> chunks = extractor._chunk_pages(pages, pages_per_chunk=2)
-            >>> print(len(chunks))  # 2 chunks
-            >>> print(chunks[0][1])  # [1, 2]
-        """
-        chunks = []
-        
-        for i in range(0, len(pages), pages_per_chunk):
-            # Get slice of pages for this chunk
-            chunk_pages = pages[i:i + pages_per_chunk]
-            
-            # Calculate page numbers (1-indexed)
-            page_numbers = list(range(i + 1, i + len(chunk_pages) + 1))
-            
-            # Prepare annotated chunk text
-            chunk_text = self._prepare_chunk_text(chunk_pages, page_numbers)
-            
-            chunks.append((chunk_text, page_numbers))
-        
-        return chunks
-    
-    def _prepare_chunk_text(self, pages: List[str], page_numbers: List[int]) -> str:
-        """
-        Prepare chunk text with page annotations.
-        
-        Args:
-            pages (List[str]): List of page texts for this chunk
-            page_numbers (List[int]): Corresponding page numbers (1-indexed)
-        
-        Returns:
-            str: Annotated chunk text with page markers
-        
-        Format:
-            === PAGE 1 ===
-            <page 1 content>
-            === PAGE 2 ===
-            <page 2 content>
-        """
-        annotated_sections = []
-        
-        for page_text, page_no in zip(pages, page_numbers):
-            # Add page marker
-            section = f"=== PAGE {page_no} ===\n{page_text}"
-            annotated_sections.append(section)
-        
-        # Join all sections with double newline separator
-        chunk_text = "\n\n".join(annotated_sections)
-        return chunk_text
-    
-    def _extract_requirements_via_llm(
+    def _should_process_page(
         self, 
-        chunk_text: str, 
-        page_numbers: List[int],
-        start_req_id: int = 1
-    ) -> List[Dict]:
+        project_id: str, 
+        version_id: str,
+        page_hash: str, 
+        page_no: int, 
+        previous_version_id: Optional[str]
+    ) -> bool:
         """
-        Extract requirements from a chunk using LLM.
+        Determine if a page needs LLM processing based on hash comparison.
         
         Args:
-            chunk_text (str): Annotated chunk text with page markers
-            page_numbers (List[int]): Page numbers in this chunk
-            start_req_id (int): Starting requirement ID for sequential numbering
+            page_hash (str): SHA-256 hash of current page
+            page_no (int): Page number
+            previous_version_id (str): Previous version UUID (None for V1)
         
         Returns:
-            List[Dict]: List of requirement dicts with:
-                - requirement_id (str): e.g., "REQ-001"
-                - text (str): Exact requirement sentence
-                - source_page (int): Page number where requirement was found
+            bool: True if page should be sent to LLM, False if unchanged
         """
+        # For V1 (no previous version), process all pages
+        if not previous_version_id:
+            return True
+        
         try:
-            # Call LLM helper function
-            requirements = extract_requirements_llm_with_context(
-                chunk_text=chunk_text,
-                start_req_id=start_req_id,
-                model_name=self.model_name
+            # Get previous version's document pages
+            prev_docs = self.mongo_client.read(
+                self.document_pages_collection,
+                {"project_id": project_id, "version_id": previous_version_id}
             )
             
-            # Validate that source_page is within expected range
-            for req in requirements:
-                if req['source_page'] not in page_numbers:
-                    logger.warning(
-                        f"Requirement {req['requirement_id']} references page {req['source_page']} "
-                        f"which is outside chunk range {page_numbers}. Adjusting to first page."
-                    )
-                    req['source_page'] = page_numbers[0]
+            if not prev_docs:
+                logger.warning(f"No previous document pages found for version {previous_version_id}")
+                return True
             
-            return requirements
+            # Use utility function for comparison
+            prev_pages = prev_docs[0].get("pages", [])
+            return req_utils.should_process_page(page_hash, page_no, prev_pages)
+                
+        except Exception as e:
+            logger.error(f"Error checking page hash: {str(e)}")
+            # On error, process the page to be safe
+            return True
+    
+    def _compare_requirements_with_previous(
+        self,
+        current_requirements: List[Dict],
+        project_id: str,
+        previous_version_id: str
+    ) -> Dict[str, List[Dict]]:
+        """
+        Compare current requirements with previous version using hashes.
+        
+        Args:
+            current_requirements (List[Dict]): New requirements with hashes
+            project_id (str): SQLite project UUID
+            previous_version_id (str): Previous version UUID
+            previous_version_id (str): Previous version UUID
+        
+        Returns:
+            Dict: {
+                "unchanged": List[Dict],  # Reuse existing tests
+                "new": List[Dict],        # Generate tests
+                "modified": List[Dict],   # Regenerate tests
+                "removed": List[Dict]     # Mark tests obsolete
+            }
+        """
+        logger.info(f"Comparing requirements with version {previous_version_id}")
+        
+        try:
+            # Get previous requirements
+            prev_reqs = self.storage.get_requirements_by_version(project_id, previous_version_id)
+            
+            # Use utility function for comparison
+            return req_utils.compare_requirements_by_hash(current_requirements, prev_reqs)
             
         except Exception as e:
-            logger.error(f"Error extracting requirements from chunk: {str(e)}")
-            # Return empty list to allow processing to continue
-            return []
-        
-
-
-
+            logger.error(f"Error comparing requirements: {str(e)}", exc_info=True)
+            # On error, treat all as new
+            return {
+                "unchanged": [],
+                "new": current_requirements,
+                "modified": [],
+                "removed": []
+            }
     
     # --- Utility Methods for Backward Compatibility ----------------
     
-    def extract_from_file(self, file_path: str) -> Tuple[str, None]:
-        """
-        DEPRECATED: Legacy method for backward compatibility with graph_pipeline.
-        Returns markdown text and None for images (to match DocumentParser interface).
+    # def extract_from_file(self, file_path: str) -> Tuple[str, None]:
+    #     """
+    #     DEPRECATED: Legacy method for backward compatibility with graph_pipeline.
+    #     Returns markdown text and None for images (to match DocumentParser interface).
         
-        For new code, use extract_and_store() instead.
+    #     For new code, use extract_and_store() instead.
         
-        Args:
-            file_path (str): Path to document file
+    #     Args:
+    #         file_path (str): Path to document file
         
-        Returns:
-            Tuple[str, None]: (markdown_text, None)
-        """
-        logger.warning("extract_from_file() is deprecated. Use extract_and_store() for MongoDB persistence.")
+    #     Returns:
+    #         Tuple[str, None]: (markdown_text, None)
+    #     """
+    #     logger.warning("extract_from_file() is deprecated. Use extract_and_store() for MongoDB persistence.")
         
-        try:
-            pages = self.helper.extract_doc_pages(file_path)
-            # Join all pages with separator
-            markdown = "\n\n".join([f"=== PAGE {i+1} ===\n{page}" for i, page in enumerate(pages)])
-            return markdown, None
-        except Exception as e:
-            logger.error(f"Error in extract_from_file: {str(e)}", exc_info=True)
-            return "", None
+    #     try:
+    #         pages = self.helper.extract_doc_pages(file_path)
+    #         # Join all pages with separator
+    #         markdown = "\n\n".join([f"=== PAGE {i+1} ===\n{page}" for i, page in enumerate(pages)])
+    #         return markdown, None
+    #     except Exception as e:
+    #         logger.error(f"Error in extract_from_file: {str(e)}", exc_info=True)
+    #         return "", None
     
-    def get_document_pages_by_version(self, version_id: str) -> List[Dict]:
-        """
-        Retrieve document pages for a specific version.
-        
-        Args:
-            version_id (str): SQLite version UUID
-        
-        Returns:
-            List[Dict]: List of document page records
-        """
-        try:
-            results = self.mongo_client.read(
-                self.document_pages_collection,
-                {"version_id": version_id}
-            )
-            return results
-        except Exception as e:
-            logger.error(f"Error retrieving document pages: {str(e)}", exc_info=True)
-            return []
+    # def get_document_pages_by_version(self, version_id: str) -> List[Dict]:
+    #     """Retrieve document pages for a specific version."""
+    #     return self.storage.get_document_pages_by_version(version_id)
     
-    def get_requirements_by_version(self, version_id: str) -> List[Dict]:
-        """
-        Retrieve requirements for a specific version.
-        
-        Args:
-            version_id (str): SQLite version UUID
-        
-        Returns:
-            List[Dict]: List of requirement records
-        """
-        try:
-            results = self.mongo_client.read(
-                self.requirements_collection,
-                {"version_id": version_id}
-            )
-            return results
-        except Exception as e:
-            logger.error(f"Error retrieving requirements: {str(e)}", exc_info=True)
-            return []
+    # def get_requirements_by_version(self, version_id: str) -> List[Dict]:
+    #     """Retrieve requirements for a specific version."""
+    #     return self.storage.get_requirements_by_version(version_id)
     
-    def compare_document_versions(self, old_version_id: str, new_version_id: str) -> Dict:
-        """
-        Compare document pages between two versions (placeholder for future implementation).
+    # def compare_document_versions(self, old_version_id: str, new_version_id: str) -> Dict:
+    #     """
+    #     Compare document pages between two versions (placeholder for future implementation).
         
-        Args:
-            old_version_id (str): Previous version UUID
-            new_version_id (str): New version UUID
+    #     Args:
+    #         old_version_id (str): Previous version UUID
+    #         new_version_id (str): New version UUID
         
-        Returns:
-            Dict: Comparison results with added/removed/modified pages
-        """
-        logger.info(f"Version comparison placeholder - to be implemented later")
-        # TODO: Implement version comparison logic using page hashes
-        return {
-            "status": "not_implemented",
-            "message": "Version comparison will be implemented in future release"
-        }
+    #     Returns:
+    #         Dict: Comparison results with added/removed/modified pages
+    #     """
+    #     logger.info(f"Version comparison placeholder - to be implemented later")
+    #     # TODO: Implement version comparison logic using page hashes
+    #     return {
+    #         "status": "not_implemented",
+    #         "message": "Version comparison will be implemented in future release"
+    #     }
 
 
 # CLI usage for testing
@@ -499,7 +370,7 @@ if __name__ == "__main__":
     result = extractor.extract_and_store(
         file_path=file_path,
         project_id=project_id,
-        version_id=version_id,
+        version_id=str(version_id)  ,
         document_name=document_name
     )
     

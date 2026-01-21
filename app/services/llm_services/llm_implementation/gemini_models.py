@@ -52,12 +52,12 @@ class Gemini25FlashLLM(LLMInterface, metaclass =DcSingleton):
 class Gemini25FlashLiteLLM(LLMInterface, metaclass=DcSingleton):
     def __init__(self, temperature: float = 1.0):
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-flash-latest",
+            model="gemini-flash-lite-latest",
             temperature=temperature,
             google_api_key=API_KEY
         )
 
-    def get_llm(self) -> "Gemini25FlashLiteLLM":
+    def get_llm(self) -> BaseChatModel:
         """
         Static method to get an instance of Gemini25FlashLLM.
 

@@ -304,6 +304,25 @@ async def generate_testcases(
             path = Helper.save_file("/tmp", content=content_bytes, filename=filename)
             logger.info(f"Saved uploaded file to temp path: {path}")
 
+            # Auto-detect previous version for this project
+            previous_version_id = None
+            if version_id:
+                with sqlite_client.get_session() as session:
+                    from sqlalchemy import and_
+                    previous_version = session.query(Version).filter(
+                        and_(
+                            Version.project_id == project_id,
+                            Version.id < version_id,
+                            Version.id != version_id
+                        )
+                    ).order_by(Version.created_at.desc()).first()
+                    
+                    if previous_version:
+                        previous_version_id = previous_version.id
+                        logger.info(f"Auto-detected previous version: {previous_version_id} ({previous_version.version_name})")
+                    else:
+                        logger.info("No previous version found - this is the first version")
+
             # Generate test cases with MongoDB storage
             test_cases = await asyncio.to_thread(
                 testcase_generator.generate_testcase, 
@@ -311,7 +330,8 @@ async def generate_testcases(
                 project_id=project_id, 
                 invoke_type=request_type, 
                 invoke_command=command, 
-                version_id=version_id
+                version_id=version_id,
+                previous_version_id=previous_version_id
             )
         except Exception as exe:
             logger.exception("Failed to process testcase generation request")

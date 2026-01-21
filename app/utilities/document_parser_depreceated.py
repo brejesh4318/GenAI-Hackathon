@@ -185,8 +185,10 @@ class DocumentParser(metaclass=DcSingleton):
                 pages = []
                 for no, pg in result.document.pages.items():
                     page_text = result.document.export_to_markdown(page_no=no)
-                    pages.append(page_text)
-                
+                    if page_text:  
+                        pages.append(page_text)
+                    else:
+                        pages.append("Empty page")  # Empty page                
                 logger.info(f"Successfully extracted {len(pages)} pages from {file_path}")
                 return pages
                 

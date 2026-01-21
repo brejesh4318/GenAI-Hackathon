@@ -6,6 +6,8 @@ from app.utilities import dc_logger
 from app.utilities.singletons_factory import DcSingleton
 from app.utilities.document_parser_depreceated import DocumentParser
 import os
+import hashlib
+import re
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 
@@ -98,6 +100,63 @@ class Helper(metaclass = DcSingleton):
             return f"{minutes} minute{'s' if minutes != 1 else ''}"
         else:
             return f"{seconds} second{'s' if seconds != 1 else ''}"
-
-
-
+    
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """
+        Normalize text for consistent hashing.
+        
+        Args:
+            text (str): Raw text
+        
+        Returns:
+            str: Normalized text (lowercase, collapsed spaces, trimmed)
+        """
+        if not text:
+            return ""
+        
+        # Remove extra whitespace and collapse to single spaces
+        normalized = re.sub(r'\s+', ' ', text)
+        
+        # Trim leading/trailing whitespace
+        normalized = normalized.strip()
+        
+        # Normalize line breaks
+        normalized = normalized.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Convert to lowercase for hash consistency
+        normalized = normalized.lower()
+        
+        return normalized
+    
+    @staticmethod
+    def generate_requirement_hash(text: str) -> str:
+        """
+        Generate SHA-256 hash of normalized requirement text.
+        
+        Args:
+            text (str): Requirement text
+        
+        Returns:
+            str: Full SHA-256 hash (64 hex chars)
+        """
+        normalized = Helper.normalize_text(text)
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    
+    @staticmethod
+    def generate_requirement_id(text: str) -> str:
+        """
+        Generate deterministic requirement ID from text.
+        
+        Args:
+            text (str): Requirement text
+        
+        Returns:
+            str: Requirement ID (format: REQ-<first_8_chars_of_hash>)
+        
+        Example:
+            >>> Helper.generate_requirement_id("System must validate input")
+            'REQ-a1b2c3d4'
+        """
+        req_hash = Helper.generate_requirement_hash(text)
+        return f"REQ-{req_hash[:8]}"

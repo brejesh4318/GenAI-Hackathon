@@ -13,8 +13,10 @@ class AgentState(TypedDict):
     file_path: list[str]
     project_id: Optional[str]
     version_id: Optional[str]
+    previous_version_id: Optional[str]
     document: str
     images: List[str]
+    requirements: Optional[List[Dict]]  # Requirements from MongoDB
     context: str
     context_summary: Optional[str]
     context_built: bool

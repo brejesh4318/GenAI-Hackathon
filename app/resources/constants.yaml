@@ -17,6 +17,7 @@ prompt_names:
   - "context-builder-agent"
   - "validator-agent"
   - "test-case-generator"
+  - "requirement-extractor"
 
 jwt:
   secret_key: "your-secret-key-change-in-production-use-env-variable"

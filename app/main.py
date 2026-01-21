@@ -4,7 +4,8 @@ from app.routers import (
     testcases_router,
     dashboard_router,
     auth_router,
-    utilities_router
+    utilities_router,
+    requirements_router
 )
 
 import time
@@ -50,6 +51,7 @@ subapi.include_router(dashboard_router.router)  # Root endpoints (/, /dashboardD
 subapi.include_router(projects_router.router)  # /projects/*
 subapi.include_router(versions_router.router)  # /versions/*
 subapi.include_router(testcases_router.router)  # /testcases/*
+subapi.include_router(requirements_router.router)  # /requirements/* (testing extraction)
 subapi.include_router(utilities_router.router)  # /utils/* (upload, export, jira)
 
 app.mount("/v1/dash-test", subapi)

@@ -11,8 +11,8 @@ class TestCaseGenerator(metaclass = DcSingleton):
     def __init__(self, graph_pipe: GraphPipe):
         self.graph_pipe = graph_pipe
 
-    def generate_testcase(self, project_id: str, invoke_type: str = "new", invoke_command: str = "", document_path=None, version_id: str = None) -> dict:
-        """Generate test cases using the new agentic graph architecture with MongoDB persistence"""
+    def generate_testcase(self, project_id: str, invoke_type: str = "new", invoke_command: str = "", document_path=None, version_id: str = None, previous_version_id: str = None) -> dict:
+        """Generate test cases using the new agentic graph architecture with MongoDB persistence and version tracking"""
         config = RunnableConfig(recursion_limit=50, configurable={"thread_id": project_id})
         
         try:
@@ -21,7 +21,8 @@ class TestCaseGenerator(metaclass = DcSingleton):
                     document_path, 
                     config=config, 
                     project_id=project_id,
-                    version_id=version_id
+                    version_id=version_id,
+                    previous_version_id=previous_version_id
                 )
             elif invoke_type == "resume" and invoke_command:
                 response = self.graph_pipe.resume_graph(command=invoke_command, config=config)
