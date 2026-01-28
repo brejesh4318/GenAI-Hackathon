@@ -134,7 +134,7 @@ async def upload_file(
 
 @router.get("/export/{project_id}")
 async def export_test_cases(
-    project_id: str,
+    project_id: int,
     current_user: User = Depends(AuthService.get_current_user)
 ):
     """Export test cases to CSV (requires authentication)"""

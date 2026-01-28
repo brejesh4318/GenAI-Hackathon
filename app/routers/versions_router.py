@@ -112,7 +112,7 @@ async def create_version(
 
 
 @router.get("/project/{project_id}")
-async def get_versions(project_id: str, current_user: User = Depends(AuthService.get_current_user)):
+async def get_versions(project_id: int, current_user: User = Depends(AuthService.get_current_user)):
     """Get all versions for a project (requires permission)"""
     user_id = current_user.id
     logger.info(f"Fetching versions for project: {project_id}")
@@ -183,7 +183,7 @@ async def get_versions(project_id: str, current_user: User = Depends(AuthService
 
 
 @router.get("/{version_id}")
-async def get_version_detail(version_id: str, current_user: User = Depends(AuthService.get_current_user)):
+async def get_version_detail(version_id: int, current_user: User = Depends(AuthService.get_current_user)):
     """Get detailed information about a specific version (requires authentication)"""
     user_id = current_user.id
     logger.info(f"Fetching details for version: {version_id}")
@@ -247,7 +247,7 @@ async def get_version_detail(version_id: str, current_user: User = Depends(AuthS
 
 
 @router.put("/{version_id}")
-async def update_version(version_id: str, request: VersionCreateRequest):
+async def update_version(version_id: int, request: VersionCreateRequest):
     """Update version details"""
     logger.info(f"Updating version: {version_id}")
     try:

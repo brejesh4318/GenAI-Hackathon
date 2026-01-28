@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 from pydantic import BaseModel, Field
 from langchain.output_parsers import PydanticOutputParser
 
@@ -13,7 +13,7 @@ class TestCase(BaseModel):
     requirement_id: Optional[List[str]] = Field(None, description="list of Requirement IDs from prd.")
     requirement_description: str = Field(..., description="Brief description of the requirement being tested")
     preconditions: Optional[List[str]] = Field(default_factory=list, description="Conditions required before execution")
-    test_data: Optional[Dict[str, str]] = Field(default_factory=dict, description="Input data required for test case")
+    test_data: Optional[list[str]] = Field(default_factory=dict, description="Input data required for test case")
     steps: List[str] = Field(..., description="Step-by-step instructions to execute the test")
     expected_result: List[str] = Field(..., description="Expected outcome(s) after executing the test")
     postconditions: Optional[List[str]] = Field(default_factory=list, description="System state after execution")

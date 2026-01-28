@@ -66,7 +66,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @router.get("/export/{project_id}")
-async def export_test_cases(project_id: str):
+async def export_test_cases(project_id: int):
     """Export test cases to CSV format"""
     try:
         # Get project from SQLite using ORM

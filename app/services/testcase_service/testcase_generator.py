@@ -11,9 +11,9 @@ class TestCaseGenerator(metaclass = DcSingleton):
     def __init__(self, graph_pipe: GraphPipe):
         self.graph_pipe = graph_pipe
 
-    def generate_testcase(self, project_id: str, invoke_type: str = "new", invoke_command: str = "", document_path=None, version_id: str = None, previous_version_id: str = None) -> dict:
+    def generate_testcase(self, project_id: int, invoke_type: str = "new", invoke_command: str = "", document_path=None, version_id: int = None, previous_version_id: int = None) -> dict:
         """Generate test cases using the new agentic graph architecture with MongoDB persistence and version tracking"""
-        config = RunnableConfig(recursion_limit=50, configurable={"thread_id": project_id})
+        config = RunnableConfig(recursion_limit=50, configurable={"thread_id": str(project_id)})
         
         try:
             if invoke_type == "new" and document_path:
@@ -44,7 +44,7 @@ class TestCaseGenerator(metaclass = DcSingleton):
                 logger.info(f"Successfully generated {len(test_cases)} test cases")
                 return {"response": test_cases, "type": "final"}
         except Exception as e:
-            logger.error(f"Error in generate_testcase: {str(e)}")
+            logger.error(f"Error in generate_testcase: {str(e)}", exc_info=True)
             raise e
 
 

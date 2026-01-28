@@ -5,7 +5,7 @@ tmp_dir: /tmp
 
 llm_model:
   # model_name: gemini_2.5_flash
-  model_name: gemini-2.5-flash-lite
+  model_name: gemini_2.5_flash
   temperature: 1
 
 deep_file_extractor: true

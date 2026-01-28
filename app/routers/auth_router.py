@@ -272,7 +272,7 @@ async def grant_project_permission(
 
 @router.get("/project-permissions/{project_id}")
 async def get_project_permissions(
-    project_id: str,
+    project_id: int,
     current_user: User = Depends(AuthService.get_current_user)
 ):
     """Get all users with access to a project"""

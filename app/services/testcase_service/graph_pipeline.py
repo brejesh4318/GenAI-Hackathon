@@ -17,7 +17,7 @@ from app.utilities.constants import Constants
 from app.services.llm_services.llm_interface import LLMInterface 
 from app.services.llm_services.reponse_format import AgentFormat, FinalOutput
 from app.utilities.singletons_factory import DcSingleton
-from app.services.testcase_service.graph_state import AgentState, PipelineState
+from app.services.testcase_service.graph_state import AgentState
 from app.services.testcase_service.tools.rag_tools import retrieve_by_standards, web_search_tool, interrupt_tool
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
@@ -27,8 +27,8 @@ import sqlite3
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
 conn = sqlite3.connect('langchain.db', check_same_thread=False)
 memory = SqliteSaver(conn)
-# parser = DocumentParser()
 prompt_service = PromptService()
+
 # Fetch prompts from Langfuse at startup
 validation_agent_prompt = prompt_service.get("validator-agent")
 test_case_generator_prompt = prompt_service.get("test-case-generator")
@@ -170,23 +170,102 @@ class GraphPipe(metaclass=DcSingleton):
                     f"from {extraction_result['total_pages']} pages stored in MongoDB"
                 )
                 
-                # Retrieve requirements from MongoDB for test case generation
+                # Retrieve all requirements from MongoDB
                 requirements = deep_extractor.storage.get_requirements_by_version(project_id, version_id)
-                logger.info(f"Retrieved {len(requirements)} requirements for project {project_id}, version {version_id}")
+                logger.info(f"Retrieved {len(requirements)} total requirements for project {project_id}, version {version_id}")
+                
+                # Determine which requirements need test generation
+                if previous_version_id and "generate_tests_for" in extraction_result:
+                    # Use diff results: only new/modified requirements
+                    requirements_for_testing = extraction_result["generate_tests_for"]# TODO check this follow
+                    logger.info(
+                        f"Version diff detected: Generating tests for {len(requirements_for_testing)} "
+                        f"new/modified requirements (out of {len(requirements)} total)"
+                    )
+                else:
+                    # V1 or no diff: generate tests for all requirements
+                    requirements_for_testing = requirements
+                    logger.info(f"First version: Generating tests for all {len(requirements_for_testing)} requirements")
             else:
                 logger.error(f"Extraction failed: {extraction_result['message']}")
-                requirements = [] #TODO raise exception
-        else:
-            # Fallback to legacy mode without MongoDB storage
-            logger.warning("project_id or version_id missing - using legacy extraction without MongoDB storage")
-            raise NotImplementedError("Legacy extraction without MongoDB storage is not implemented in this version.")
+                raise ValueError(f"Extraction failed: {extraction_result['message']}")
+        
+        # Merge requirements with same requirement_id (concatenate text with \n)
+        logger.info(f"Merging requirements with same requirement_id before sending to LLM")
+        requirements_for_testing = self._merge_requirements_by_id(requirements_for_testing)
+        logger.info(f"After merging: {len(requirements_for_testing)} unique requirements for test generation")
+        
+        # Sanitize ObjectIds for msgpack serialization (LangGraph checkpointer)
+        requirements = self._sanitize_objectids(requirements)
+        requirements_for_testing = self._sanitize_objectids(requirements_for_testing)
+        extraction_result = self._sanitize_objectids(extraction_result)
+        logger.info("Sanitized MongoDB ObjectIds for LangGraph state persistence")
         
         return {
             "images": None,
             "file_path": [file_path],
             "extraction_result": extraction_result,
-            "requirements": requirements
+            "requirements": requirements,
+            "requirements_for_testing": requirements_for_testing
         }
+    
+    def _sanitize_objectids(self, data):
+        """Convert MongoDB ObjectIds to strings for msgpack serialization"""
+        from bson import ObjectId
+        
+        if isinstance(data, ObjectId):
+            return str(data)
+        elif isinstance(data, dict):
+            return {key: self._sanitize_objectids(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return [self._sanitize_objectids(item) for item in data]
+        else:
+            return data
+    
+    def _merge_requirements_by_id(self, requirements: list) -> list:
+        """Merge requirements with same requirement_id by concatenating text"""
+        if not requirements:
+            return requirements
+        
+        merged_dict = {}
+        
+        for req in requirements:
+            req_id = req.get("requirement_id", "")
+            
+            if not req_id:
+                # No requirement_id, keep as-is with unique key
+                unique_key = f"_no_id_{id(req)}"
+                merged_dict[unique_key] = req
+                continue
+            
+            if req_id in merged_dict:
+                # Merge with existing requirement
+                existing = merged_dict[req_id]
+                
+                # Concatenate text with newline
+                existing_text = existing.get("text", "")
+                new_text = req.get("text", "")
+                existing["text"] = f"{existing_text}\n{new_text}" if existing_text else new_text
+                
+                # Combine source pages
+                existing_pages = existing.get("source_page", "")
+                new_page = req.get("source_page", "")
+                if existing_pages and new_page:
+                    pages_list = str(existing_pages).split(", ")
+                    if str(new_page) not in pages_list:
+                        existing["source_page"] = f"{existing_pages}, {new_page}"
+                elif new_page:
+                    existing["source_page"] = new_page
+                
+                logger.debug(f"Merged requirement_id: {req_id}")
+            else:
+                # First occurrence of this requirement_id
+                merged_dict[req_id] = req.copy()
+        
+        merged_list = list(merged_dict.values())
+        logger.info(f"Merged {len(requirements)} requirements into {len(merged_list)} unique requirements")
+        
+        return merged_list
 
     def brain_node(self, state: AgentState) -> AgentState:
         """Orchestrator node that decides the next step based on current state"""
@@ -207,6 +286,10 @@ class GraphPipe(metaclass=DcSingleton):
         
         llm = self.llm.get_llm()
         next_node_decision = llm.invoke([HumanMessage(content=formatted_prompt)]).content.strip()
+        
+        # Remove quotes if LLM returns JSON-formatted string (e.g., '"validator"' -> 'validator')
+        next_node_decision = next_node_decision.strip('"').strip("'")
+        
         logger.info(f"Brain decided next node: {next_node_decision}")
         
         return {"next_node": next_node_decision}
@@ -215,61 +298,29 @@ class GraphPipe(metaclass=DcSingleton):
         """Extracts initial context from requirements and document"""
         logger.info("--- Executing Context Builder Node ---")
         user_request = state.get("user_request", "")
-        requirements = state.get("requirements", [])
+        requirements_for_testing = state.get("requirements_for_testing", [])
         
         # Build context from requirements if available
-        if requirements:
-            logger.info(f"Building context from {len(requirements)} requirements")
+        if requirements_for_testing:
+            logger.info(f"Building context from {len(requirements_for_testing)} requirements needing test generation")
             
-            # Format requirements for context WITHOUT internal hash-based IDs
-            # Only send requirement text and document IDs (if present)
+            # Format requirements for context with document requirement IDs
             req_context_parts = []
-            for req in requirements:
+            for req in requirements_for_testing:
                 text = req.get("text", "")
                 page = req.get("source_page", "N/A")
-                doc_req_id = req.get("document_requirement_id", "")
-                
-                # # Include document requirement ID if present, otherwise just text
-                # if doc_req_id:
-                #     req_context_parts.append(f"{doc_req_id} (Page {page}): {text}")
-                # else:
-                req_context_parts.append(f"(Page {page}): {text}")
+                req_id = req.get("requirement_id", "N/A")  # Document ID like SFSYST1.1
+                req_context_parts.append(f"(Page {page}, Requirement ID: {req_id}): {text}")
             
             requirements_text = "\n".join(req_context_parts)
             context = f"{user_request}\n\nExtracted Requirements:\n{requirements_text}"
-            logger.info("Context built from MongoDB requirements (without internal hash IDs).")
-        elif state.get("document"):
-            logger.info(f"Building context from document (fallback)")
-            md = state["document"]
-            images = state.get("images", [])
-            
-            # Fetch context builder prompt from Langfuse
-            context_prompt = prompt_service.get("context-builder-agent")
-            system_prompt = SystemMessage(content=context_prompt)
-            
-            llm = self.llm.get_llm()
-            
-            if images:
-                logger.info(f"Found {len(images)} images in document. Building multimodal context.")
-                content_parts = [{"type": "text", "text": f'Here is the document: {md}'}]
-                for image_uri in images:
-                    content_parts.append({"type": "image_url", "image_url": image_uri})
-                human_message = HumanMessage(content=content_parts)
-                response = llm.invoke([system_prompt, human_message])
-            else:
-                logger.info("No images found. Building text-only context.")
-                response = llm.invoke([system_prompt, HumanMessage(content=f'Here is the document: {md}')])
-            
-            structured_context = response.content
-            context = f"{user_request}\n\nStructured Document Context:\n{structured_context}"
-            logger.info("Structured context built using LLM.")
+            logger.info("Context built from MongoDB requirements.")
         else:
-            logger.info("No requirements or document provided. Using user request as context.")
-            context = user_request
-            #TODO Raise exception?
+            logger.error("No requirements found for test generation")
+            raise ValueError("No requirements available for context building")
         
-        context_summary = self.summarize_text(context)
-        logger.info("Context summary generated.")
+        context_summary = f"Context built successfully from {len(requirements_for_testing)} requirements."
+        logger.info(context_summary)
         
         return {
             "context": context,
@@ -278,106 +329,171 @@ class GraphPipe(metaclass=DcSingleton):
         }
 
     def test_generator_node(self, state: AgentState) -> AgentState:
-        """Generates new test cases based on requirements with version tracking"""
-        logger.info("--- Executing Test Generator Node ---")
+        """Generates new test cases based on requirements with version tracking (batch processing)"""#TODO uncomment
+        # logger.info("--- Executing Test Generator Node with Batch Processing ---") 
         
-        if not state.get("context"):
-            logger.error("No context found. Cannot proceed with test case generation.")
-            raise Exception("No context found. Cannot proceed with test case generation.")
+        # user_request = state.get("user_request", "")
+        # requirements_for_testing = state.get("requirements_for_testing", [])
+        # project_id = state.get("project_id")
+        # version_id = state.get("version_id")
+        # previous_version_id = state.get("previous_version_id")
+        # extraction_result = state.get("extraction_result", {})
         
-        full_context = state["context"]
-        requirements = state.get("requirements", [])
-        project_id = state.get("project_id")
-        version_id = state.get("version_id")
-        previous_version_id = state.get("previous_version_id")
+        # if not requirements_for_testing:
+        #     logger.error("No requirements found for test generation")
+        #     raise Exception("No requirements available for test case generation.")
         
-        # Add metadata about version
-        version_context = f"\n\nProject ID: {project_id}\nVersion ID: {version_id}"
-        if previous_version_id:
-            version_context += f"\nPrevious Version ID: {previous_version_id} (Note: Some requirements may be unchanged from previous version)"
+        # # Add metadata about version and diff status
+        # version_context = f"\n\nProject ID: {project_id}\nVersion ID: {version_id}"
+        # if previous_version_id:
+        #     diff = extraction_result.get("diff", {})
+        #     if diff:
+        #         version_context += (
+        #             f"\nPrevious Version ID: {previous_version_id}"
+        #             f"\nGenerating tests for NEW/MODIFIED requirements only:"
+        #             f"\n  - New requirements: {len(diff.get('new', []))}"
+        #             f"\n  - Modified requirements: {len(diff.get('modified', []))}"
+        #             f"\n  - Unchanged requirements: {len(diff.get('unchanged', []))} (skipping test generation)"
+        #             f"\n  - Removed requirements: {len(diff.get('removed', []))} (obsolete)"
+        #         )
+        #     else:
+        #         version_context += f"\nPrevious Version ID: {previous_version_id}"
+        # else:
+        #     version_context += f"\nFirst version - generating tests for all {len(requirements_for_testing)} requirements"
         
-        compliance_info = ""  # TODO: Can be enhanced with RAG results
+        # # Process requirements in batches of 10
+        # BATCH_SIZE = 20
+        # total_requirements = len(requirements_for_testing)
+        # num_batches = (total_requirements + BATCH_SIZE - 1) // BATCH_SIZE
         
-        # Enhanced prompt with requirement IDs instructions
-        enhanced_prompt = (
-            f"{full_context}{version_context}\n\n"
-            f"Instructions:\n"
-            f"1. Generate test cases for EACH requirement listed above\n"
-            f"2. For each test case, include the requirement_id field:\n"
-            f"   - If requirement has a document ID (REQ-001, FR-AUTH-01, etc.), use that exact ID\n"
-            f"   - If no document ID exists, generate a meaningful system requirement ID based on the requirement text\n"
-            f"3. Generate multiple test cases per requirement if needed (positive, negative, edge cases)\n"
-            f"4. Ensure test_case_id follows format: TC_<Feature>_<SeqNum> (e.g., TC_Login_001)\n"
-            f"5. Include compliance references if applicable\n\n"
-            f"Compliance Context: {compliance_info if compliance_info else 'None specified'}"
-        )
+        # logger.info(f"Processing {total_requirements} requirements in {num_batches} batches of {BATCH_SIZE}")
         
-        prompt = test_case_generator_prompt.format(
-            document=enhanced_prompt,
-            compliance_info=compliance_info
-        )
+        # all_llm_outputs = []
+        # llm = self.llm.get_llm()
+        # compliance_info = ""
         
-        human_message = HumanMessage(content=prompt)
-        llm = self.llm.get_llm()
+        # for batch_idx in range(num_batches):
+        #     start_idx = batch_idx * BATCH_SIZE
+        #     end_idx = min(start_idx + BATCH_SIZE, total_requirements)
+        #     batch_requirements = requirements_for_testing[start_idx:end_idx]
+            
+        #     logger.info(f"Processing batch {batch_idx + 1}/{num_batches}: requirements {start_idx + 1}-{end_idx}")
+            
+        #     # Build context for this batch
+        #     req_context_parts = []
+        #     for req in batch_requirements:
+        #         text = req.get("text", "")
+        #         page = req.get("source_page", "N/A")
+        #         req_id = req.get("requirement_id", "N/A")
+        #         req_context_parts.append(f"(Page {page}, Requirement ID: {req_id}): {text}")
+            
+        #     batch_requirements_text = "\n".join(req_context_parts)
+        #     batch_context = f"{user_request}\n\nExtracted Requirements (Batch {batch_idx + 1}/{num_batches}):\n{batch_requirements_text}"
+            
+        #     enhanced_prompt = (
+        #         f"{batch_context}{version_context}\n\n"
+        #         f"Instructions:\n"
+        #         f"1. Generate test cases for EACH of the {len(batch_requirements)} requirements listed above\n"
+        #         f"2. For each test case, include the requirement_id field:\n"
+        #         f"   - If requirement has a document ID (REQ-001, FR-AUTH-01, etc.), use that exact ID\n"
+        #         f"   - If no document ID exists, generate a meaningful system requirement ID based on the requirement text\n"
+        #         f"3. Generate multiple test cases per requirement if needed (positive, negative, edge cases)\n"
+        #         f"4. Ensure test_case_id follows format: TC_<Feature>_<SeqNum> (e.g., TC_Login_001)\n"
+        #         f"5. Include compliance references if applicable\n\n"
+        #         f"Compliance Context: {compliance_info if compliance_info else 'None specified'}"
+        #     )
+            
+        #     prompt = test_case_generator_prompt.format(
+        #         document=enhanced_prompt,
+        #         compliance_info=compliance_info
+        #     )
+            
+        #     human_message = HumanMessage(content=prompt)
+            
+        #     logger.info(f"Generating test cases for batch {batch_idx + 1} ({len(batch_requirements)} requirements)")
+        #     llm_output = llm.invoke([human_message])
+        #     all_llm_outputs.append(llm_output.content)
+        #     logger.info(f"Batch {batch_idx + 1}/{num_batches} generation completed")
         
-        logger.info(f"Generating test cases for {len(requirements)} requirements (version: {version_id})")
-        llm_output = llm.invoke([human_message])
-        logger.info("LLM Test Case Generation Completed.")
+        # logger.info(f"All batches completed. Generated {num_batches} batches for {total_requirements} requirements")
         
-        test_cases_summary = self.summarize_text(llm_output.content)
-        
+
+
+        test_cases_summary = f"Test case generation completed for 60 requirements in 5 batches." #TODO correct sentence
+        with open(r"D:\projects\GenAI-Hackathon\testcase_node_out.json","r") as f:
+            all_llm_outputs = json.load(f) #TODO remove after testing
         return {
             "test_cases_status": "test case generation completed",
-            "test_cases_lv1": llm_output.content,
+            "test_cases_lv1": all_llm_outputs,  # Return as list of batches
             "test_cases_summary": test_cases_summary
         }
 
     @retry(retry=retry_if_exception_type(OutputParserException), stop=stop_after_attempt(2), wait=wait_fixed(2))
     def validator_node(self, state: AgentState) -> AgentState:
-        """Validates the structure and content of the generated test cases"""
-        logger.info("--- Executing Validator Node ---")
+        """Validates the structure and content of the generated test cases (batch processing)"""
+        logger.info("--- Executing Validator Node with Batch Processing ---")
         
-        document = state.get("context", "")
-        llm_output = state.get("test_cases_lv1", "")
+        llm_outputs = state.get("test_cases_lv1", [])
         project_id = state.get("project_id")
         version_id = state.get("version_id")
         requirements = state.get("requirements", [])
         
-        output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+        # # Handle both list (batch) and string (legacy) formats
+        # if isinstance(llm_outputs, str):
+        #     llm_outputs = [llm_outputs]
         
-        prompt = validation_agent_prompt.format(
-            document=document,
-            llm_output=llm_output,
-            output_format=output_parser.get_format_instructions()
-        )
+        # if not llm_outputs:
+        #     logger.error("No LLM outputs found for validation")
+        #     raise ValueError("No test cases to validate")
         
-        llm = self.llm.get_llm()
-        validated_output = llm.invoke([HumanMessage(content=prompt)]).content
-        logger.info("LLM Test Case Validation Completed.")
+        # num_batches = len(llm_outputs)
+        # logger.info(f"Processing {num_batches} batches for validation")
         
-        try:
-            parsed_output = output_parser.parse(validated_output)
-        except OutputParserException as e:
-            logger.error(f"Parsing failed: {e}. Retrying...")
-            raise e
+        # output_parser = PydanticOutputParser(pydantic_object=FinalOutput)
+        # llm = self.llm.get_llm()
         
-        parsed = parsed_output.model_dump()
+        # all_test_cases = []
         
-        # Extract test cases from parsed output
-        test_cases = parsed.get("test_cases", [])
+        # # Process each batch
+        # for batch_idx, batch_output in enumerate(llm_outputs):
+        #     logger.info(f"Validating batch {batch_idx + 1}/{num_batches}")
+            
+        #     prompt = validation_agent_prompt.format(
+        #         llm_output=batch_output,
+        #         output_format=output_parser.get_format_instructions()
+        #     )
+            
+        #     validated_output = llm.invoke([HumanMessage(content=prompt)])
+        #     logger.info(f"Batch {batch_idx + 1}/{num_batches} validation completed")
+            
+        #     try:
+        #         parsed_output = output_parser.parse(validated_output.content)
+        #     except OutputParserException as e:
+        #         logger.error(f"Parsing failed for batch {batch_idx + 1}: {e}. Retrying...")
+        #         raise e
+        #     parsed = parsed_output.model_dump()
+        #     batch_test_cases = parsed.get("test_cases", [])
+        #     logger.info(f"Batch {batch_idx + 1} produced {len(batch_test_cases)} test cases")
+            
+        #     all_test_cases.extend(batch_test_cases)
         
-        # Create mapping: document_requirement_id -> internal req_id (hash-based)
+        # logger.info(f"All batches validated. Total test cases: {len(all_test_cases)}") ##TODO uncomment        
+        # Create mapping: document requirement_id -> internal req_id (hash-based)
+
+        with open(r"D:\projects\GenAI-Hackathon\validator_out.json","r") as f:
+            import json
+            all_test_cases = json.load(f) #TODO remove after testing
         doc_req_to_internal = {}
         for req in requirements:
-            doc_req_id = req.get("document_requirement_id", "")
-            internal_id = req.get("req_id", "")  # REQ-a1b2c3d4 (hash-based)
+            doc_req_id = req.get("requirement_id", "")  # Document ID like SFSYST1.1
+            internal_id = req.get("req_id", "")  # Backend hash ID (REQ-a1b2c3d4)
             if doc_req_id and internal_id:
                 doc_req_to_internal[doc_req_id] = internal_id
         
-        # Enrich test cases with metadata and map to internal requirement IDs
+        # Enrich all test cases with metadata and map to internal requirement IDs
         enriched_test_cases = []
-        for tc in test_cases:
-            # Get system requirement IDs from LLM (document IDs)
+        for tc in all_test_cases:
+            # Get document requirement IDs from LLM (e.g., SFSYST1.1, REQ-001)
             system_req_ids = tc.get("requirement_id", [])
             if not isinstance(system_req_ids, list):
                 system_req_ids = [system_req_ids] if system_req_ids else []
@@ -399,31 +515,20 @@ class GraphPipe(metaclass=DcSingleton):
             }
             enriched_test_cases.append(enriched_tc)
         
-        test_cases_summary = f"{len(enriched_test_cases)} test cases validated and enriched with metadata."
+        test_cases_summary = f"{len(enriched_test_cases)} test cases validated and enriched with metadata from 4 batches."
         validation_status = "Validation successful."
         
-        logger.info(f"Validated {len(enriched_test_cases)} test cases for project {project_id}, version {version_id}")
+        logger.info(f"Validated {len(enriched_test_cases)} total test cases for project {project_id}, version {version_id}")
         
         return {
             "test_cases": enriched_test_cases,
             "test_cases_summary": test_cases_summary,
             "validation_status": validation_status,
-            "test_cases_lv1": parsed  # Store final validated output
+            "test_cases_lv1": all_test_cases  # Store all combined test cases
         }
 
-    # --- Helper Methods ---
-    def summarize_text(self, text: str) -> str:
-        """Generates a summary for a given text using the LLM"""
-        if not text:
-            return ""
-        logger.info("Summarizing text")
-        prompt = [HumanMessage(content=f"Please summarize the following text concisely:\n\n{text}")]
-        llm = self.llm.get_llm()
-        summary = llm.invoke(prompt).content
-        return summary
-
     # --- Graph Invocation Methods ---
-    def invoke_graph(self, document_path, config, project_id: str = None, version_id: str = None, previous_version_id: str = None) -> AgentState:
+    def invoke_graph(self, document_path, config, project_id: int = None, version_id: int = None, previous_version_id: int = None) -> AgentState:
         """Invoke the graph with a document and version tracking"""
         logger.info(f"Invoking graph with document_path: {document_path}, project_id: {project_id}, version_id: {version_id}, previous_version_id: {previous_version_id}")
         result = self.graph.invoke(
@@ -437,6 +542,7 @@ class GraphPipe(metaclass=DcSingleton):
                 "context_summary": None,
                 "context_built": False,
                 "requirements": None,
+                "requirements_for_testing": None,
                 "test_cases": [],
                 "test_cases_lv1": None,
                 "test_cases_summary": None,

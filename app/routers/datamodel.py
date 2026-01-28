@@ -28,13 +28,13 @@ class VersionCreateRequest(BaseModel):
 
 
 class ProjectPermissionRequest(BaseModel):
-    project_id: str = Field(..., description="MongoDB project ID")
+    project_id: int = Field(..., description="SQLite project ID")
     user_email: EmailStr = Field(..., description="User email to grant permission")
     permission_level: str = Field(..., description="Permission level: owner, editor, viewer")
 
 
 class JiraPushRequest(BaseModel):
-    project_id: str = Field(..., example= "id")
+    project_id: int = Field(..., example=1)
     jira_project_key: str = Field(..., example= "HS")
     jira_mail_id: str = Field(..., example= "username@mail.com")
     jira_api: str = Field(..., example="api_key")

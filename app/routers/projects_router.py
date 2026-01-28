@@ -147,7 +147,7 @@ async def get_projects(current_user: User = Depends(AuthService.get_current_user
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, current_user: User = Depends(AuthService.get_current_user)):
+async def get_project(project_id: int, current_user: User = Depends(AuthService.get_current_user)):
     """Get project details by ID (requires authentication)"""
     user_id = current_user.id
     try:

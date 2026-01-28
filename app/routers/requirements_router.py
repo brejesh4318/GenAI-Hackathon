@@ -25,10 +25,10 @@ requirements_extractor = RequirementsExtractor(pages_per_chunk=10)
 
 @router.post("/extract")
 async def extract_requirements(
-    project_id: str,
-    version_id: Optional[str] = None,
+    project_id: int,
+    version_id: Optional[int] = None,
     version_name: Optional[str] = None,
-    previous_version_id: Optional[str] = None,
+    previous_version_id: Optional[int] = None,
     file: UploadFile = File(...),
     current_user: User = Depends(auth_service.get_current_user)
 ):
@@ -52,7 +52,7 @@ async def extract_requirements(
         logger.info(f"Extracting requirements for project={project_id}, version={version_id}")
         
         # Verify project exists
-        project = sqlite_client.get_by_id(Project, int(project_id))
+        project = sqlite_client.get_by_id(Project, project_id)
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -65,7 +65,7 @@ async def extract_requirements(
             # Get existing versions count for this project
             with sqlite_client.get_session() as session:
                 version_count = session.query(Version).filter(
-                    Version.project_id == int(project_id)
+                    Version.project_id == project_id
                 ).count()
             
             # Generate version name if not provided
@@ -74,7 +74,7 @@ async def extract_requirements(
             
             # Create new version
             new_version = Version(
-                project_id=int(project_id),
+                project_id=project_id,
                 version_name=version_name,
                 description=f"Auto-created from document: {file.filename}",
                 is_active=True,
@@ -86,8 +86,8 @@ async def extract_requirements(
             logger.info(f"Auto-created new version: {version_id} ({version_name}) for project {project_id}")
         else:
             # Verify provided version exists
-            version = sqlite_client.get_by_id(Version, int(version_id))
-            if not version or version.project_id != int(project_id):
+            version = sqlite_client.get_by_id(Version, version_id)
+            if not version or version.project_id != project_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"status": "Failed", "message": f"Version {version_id} not found for project {project_id}"}
@@ -97,8 +97,8 @@ async def extract_requirements(
         # Use provided previous_version_id or auto-detect if not provided
         if previous_version_id:
             # Verify provided previous version exists
-            prev_version = sqlite_client.get_by_id(Version, int(previous_version_id))
-            if not prev_version or prev_version.project_id != int(project_id):
+            prev_version = sqlite_client.get_by_id(Version, previous_version_id)
+            if not prev_version or prev_version.project_id != project_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"status": "Failed", "message": f"Previous version {previous_version_id} not found for project {project_id}"}
@@ -109,14 +109,14 @@ async def extract_requirements(
             with sqlite_client.get_session() as session:
                 previous_version = session.query(Version).filter(
                     and_(
-                        Version.project_id == int(project_id),
-                        Version.id < int(version_id),
-                        Version.id != int(version_id)
+                        Version.project_id == project_id,
+                        Version.id < version_id,
+                        Version.id != version_id
                     )
                 ).order_by(Version.created_at.desc()).first()
                 
                 if previous_version:
-                    previous_version_id = str(previous_version.id)
+                    previous_version_id = previous_version.id
                     logger.info(f"Auto-detected previous version: {previous_version_id} ({previous_version.version_name})")
                 else:
                     logger.info("No previous version found - this is the first version")
@@ -152,13 +152,27 @@ async def extract_requirements(
                         "status": req.get("status", "active"),
                         "requirement_hash": req.get("requirement_hash")
                     })
+                # Sanitize result to remove ObjectIds before JSON serialization
+                
+                sanitized_result = {
+                    "success": result["success"],
+                    "document_pages_id": str(result["document_pages_id"]),
+                    "requirements_ids": [str(rid) for rid in result["requirements_ids"]],
+                    "total_pages": result["total_pages"],
+                    "total_requirements": result["total_requirements"],
+                    "message": result["message"]
+                }
+                
+                # Add generate_tests_for if present (without ObjectIds)
+                if "generate_tests_for" in result:
+                    sanitized_result["generate_tests_for_count"] = len(result["generate_tests_for"])
                 
                 response_data = {
-                    "extraction_result": result,
+                    "extraction_result": sanitized_result,
                     "requirements": formatted_requirements,
                     "version_info": {
                         "version_id": version_id,
-                        "version_name": sqlite_client.get_by_id(Version, int(version_id)).version_name,
+                        "version_name": sqlite_client.get_by_id(Version, version_id).version_name,
                         "is_new_version": version_id and not version_id  # Will be updated below
                     },
                     "statistics": {
@@ -205,8 +219,8 @@ async def extract_requirements(
 
 @router.get("/list")
 async def list_requirements(
-    project_id: str,
-    version_id: str,
+    project_id: int,
+    version_id: int,
     current_user: User = Depends(auth_service.get_current_user)
 ):
     """
@@ -223,7 +237,7 @@ async def list_requirements(
         logger.info(f"Listing requirements for project={project_id}, version={version_id}")
         
         # Verify project exists
-        project = sqlite_client.get_by_id(Project, int(project_id))
+        project = sqlite_client.get_by_id(Project, project_id)
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -271,9 +285,9 @@ async def list_requirements(
 
 @router.get("/compare")
 async def compare_versions(
-    project_id: str,
-    version_id_1: str,
-    version_id_2: str,
+    project_id: int,
+    version_id_1: int,
+    version_id_2: int,
     current_user: User = Depends(auth_service.get_current_user)
 ):
     """

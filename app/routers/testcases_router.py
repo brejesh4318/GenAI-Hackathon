@@ -288,7 +288,14 @@ async def generate_testcases(
         logger.info(f"Starting new testcase generation for project: {project_id}")
         memory.delete_thread(thread_id=project_id)
         filename = None
-        file = files[0]  # TODO: handle multiple files
+        
+        if not files or len(files) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"status": "Failed", "message": "No file provided"}
+            )
+        
+        file = files[0]
         
         try:
             logger.info(
@@ -357,25 +364,66 @@ async def generate_testcases(
         test_cases = test_cases["response"]
         logger.info(f"Generated {len(test_cases)} test cases for project: {project_id}")
         
-        # Add project_id and version_id to test cases
-        test_cases = [{"project_id": str(project_id), "version_id": str(version_id) if version_id else None, **tc} for tc in test_cases]
+        # Add project_id and version_id to test cases (as integers for consistency)
+        test_cases = [{"project_id": project_id, "version_id": version_id, **tc} for tc in test_cases]
         
         # Insert test cases into MongoDB
         testcases_result = mongo_client.insert_many(testcase_collection, test_cases)
         logger.info(f"Inserted {len(test_cases)} testcases into MongoDB")
         
+        # Link test cases to requirements
+        from app.services.req_extract_service.requirements_extractor import RequirementsExtractor
+        req_extractor = RequirementsExtractor()
+        
+        for i, tc in enumerate(test_cases):
+            testcase_id = str(testcases_result[i])
+            internal_req_ids = tc.get("internal_requirement_id", [])
+            
+            # Link this testcase to all related requirements
+            for req_id in internal_req_ids:
+                # Find requirement by internal hash-based ID
+                requirements = mongo_client.read(
+                    Constants.fetch_constant("mongo_collections")["requirements"],
+                    {"project_id": project_id, "version_id": version_id, "req_id": req_id},
+                    max_count=1
+                )
+                if requirements:
+                    req_extractor.storage.link_testcase_to_requirement(
+                        str(requirements[0]["_id"]), 
+                        testcase_id
+                    )
+        
+        logger.info(f"Linked test cases to requirements")
+        
+        # Count unique documents in MongoDB for this project
+        document_pages_collection = Constants.fetch_constant("mongo_collections")["document_pages"]
+        project_docs = mongo_client.read(
+            document_pages_collection, 
+            {"project_id": project_id},
+            col_names=["document_name"]
+        ) or []
+        unique_docs_count = len(set(doc["document_name"] for doc in project_docs if "document_name" in doc))
+        
         # Update project counts using ORM
         update_data = {
             "no_test_cases": project.no_test_cases + len(test_cases),
-            "no_documents": project.no_documents + 1
+            "no_documents": unique_docs_count
         }
         sqlite_client.update(Project, project_id, update_data)
         
         # Update version counts if version_id provided
         if version_id:
+            # Count unique documents for this version
+            version_docs = mongo_client.read(
+                document_pages_collection,
+                {"project_id": project_id, "version_id": version_id},
+                col_names=["document_name"]
+            ) or []
+            version_docs_count = len(set(doc["document_name"] for doc in version_docs if "document_name" in doc))
+            
             version_update_data = {
                 "no_test_cases": version.no_test_cases + len(test_cases),
-                "no_documents": version.no_documents + 1
+                "no_documents": version_docs_count
             }
             sqlite_client.update(Version, version_id, version_update_data)
         

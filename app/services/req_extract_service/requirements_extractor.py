@@ -63,20 +63,20 @@ class RequirementsExtractor(metaclass=DcSingleton):
     def extract_and_store(
         self, 
         file_path: str,
-        project_id: str,
-        version_id: str,
+        project_id: int,
+        version_id: int,
         document_name: Optional[str] = None,
-        previous_version_id: Optional[str] = None
+        previous_version_id: Optional[int] = None
     ) -> Dict:
         """
         Extract requirements from document and store in MongoDB with version-aware diffing.
         
         Args:
             file_path (str): Path to document file (PDF, DOCX, TXT, MD)
-            project_id (str): UUID from SQLite projects table
-            version_id (str): UUID from SQLite versions table
+            project_id (int): ID from SQLite projects table
+            version_id (int): ID from SQLite versions table
             document_name (str): Optional document name (defaults to filename)
-            previous_version_id (str): UUID of previous version for diffing (None for V1)
+            previous_version_id (int): ID of previous version for diffing (None for V1)
         
         Returns:
             Dict: {
@@ -99,7 +99,13 @@ class RequirementsExtractor(metaclass=DcSingleton):
                 document_name = Path(file_path).name
             
             # Extract raw page texts
-            pages = self.helper.extract_doc_pages(file_path)
+            # pages = self.helper.extract_doc_pages(file_path)#TODO:uncomment this line
+            
+            with open(r"D:\projects\GenAI-Hackathon\test-doc.json", "r") as f:
+                import json
+                pages = json.load(f)
+                pages = pages["test-doc"]
+            
             logger.info(f"Extracted {len(pages)} pages from document: {document_name}")
             
             # Create raw pages with per-page hashing
@@ -114,8 +120,8 @@ class RequirementsExtractor(metaclass=DcSingleton):
             )
             logger.info(f"Stored document pages with ID: {doc_pages_id}")
             
-            # Extract requirements from pages (with page diffing if previous version exists)
-            requirements = page_processor.process_pages_for_requirements(
+            # Extract requirements from changed pages only
+            requirements_from_changed_pages, unchanged_page_numbers = page_processor.process_pages_for_requirements(
                 project_id=project_id,
                 version_id=version_id,
                 pages=pages,
@@ -133,15 +139,21 @@ class RequirementsExtractor(metaclass=DcSingleton):
                     prev_ver_id
                 )
             )
-            logger.info(f"Extracted {len(requirements)} requirements")
+            logger.info(f"Extracted {len(requirements_from_changed_pages)} requirements from changed pages")
             
             # Compare with previous version (if exists)
             if previous_version_id:
+                # Get changed page numbers
+                changed_page_numbers = [p["page_no"] for p in raw_pages_with_hash if p["page_no"] not in unchanged_page_numbers]
+                
                 diff = self._compare_requirements_with_previous(
-                    requirements, project_id, previous_version_id
+                    requirements_from_changed_pages,
+                    project_id,
+                    previous_version_id,
+                    changed_page_numbers
                 )
                 
-                # Store only new/modified requirements
+                # Store only new/modified requirements from changed pages
                 requirements_to_store = diff["new"] + diff["modified"]
                 requirement_ids = self.storage.store_requirements(
                     project_id=project_id,
@@ -150,22 +162,26 @@ class RequirementsExtractor(metaclass=DcSingleton):
                     requirements=requirements_to_store
                 )
                 
-                # Mark removed requirements as obsolete
+                # Mark removed requirements as obsolete (only from changed pages)
                 self.storage.mark_requirements_obsolete(diff["removed"], version_id)
                 
-                logger.info(f"Stored {len(requirement_ids)} new/modified requirements")
+                logger.info(f"Stored {len(requirement_ids)} new/modified requirements from changed pages")
+                
+                # Total requirements = unchanged + new + modified
+                total_requirements = len(diff["unchanged"]) + len(diff["new"]) + len(diff["modified"])
                 
                 return {
                     "success": True,
                     "document_pages_id": doc_pages_id,
                     "requirements_ids": requirement_ids,
                     "total_pages": len(pages),
-                    "total_requirements": len(requirements),
+                    "total_requirements": total_requirements,
                     "diff": diff,
                     "generate_tests_for": requirements_to_store,
-                    "message": f"Successfully extracted {len(requirements)} requirements: "
-                              f"{len(diff['new'])} new, {len(diff['modified'])} modified, "
-                              f"{len(diff['unchanged'])} unchanged, {len(diff['removed'])} removed"
+                    "message": f"Successfully processed {len(changed_page_numbers)} changed pages: "
+                              f"{len(diff['new'])} new requirements, {len(diff['modified'])} modified, "
+                              f"{len(diff['unchanged'])} unchanged (from {len(unchanged_page_numbers)} unchanged pages), "
+                              f"{len(diff['removed'])} removed"
                 }
             else:
                 # V1: Store all requirements
@@ -173,7 +189,7 @@ class RequirementsExtractor(metaclass=DcSingleton):
                     project_id=project_id,
                     version_id=version_id,
                     document_name=document_name,
-                    requirements=requirements
+                    requirements=requirements_from_changed_pages
                 )
                 logger.info(f"Stored {len(requirement_ids)} requirements in MongoDB")
                 
@@ -182,9 +198,9 @@ class RequirementsExtractor(metaclass=DcSingleton):
                     "document_pages_id": doc_pages_id,
                     "requirements_ids": requirement_ids,
                     "total_pages": len(pages),
-                    "total_requirements": len(requirements),
-                    "generate_tests_for": requirements,
-                    "message": f"Successfully extracted {len(requirements)} requirements from {len(pages)} pages"
+                    "total_requirements": len(requirements_from_changed_pages),
+                    "generate_tests_for": requirements_from_changed_pages,
+                    "message": f"Successfully extracted {len(requirements_from_changed_pages)} requirements from {len(pages)} pages"
                 }
             
         except Exception as e:
@@ -212,11 +228,11 @@ class RequirementsExtractor(metaclass=DcSingleton):
     
     def _should_process_page(
         self, 
-        project_id: str, 
-        version_id: str,
+        project_id: int, 
+        version_id: int,
         page_hash: str, 
         page_no: int, 
-        previous_version_id: Optional[str]
+        previous_version_id: Optional[int]
     ) -> bool:
         """
         Determine if a page needs LLM processing based on hash comparison.
@@ -224,7 +240,7 @@ class RequirementsExtractor(metaclass=DcSingleton):
         Args:
             page_hash (str): SHA-256 hash of current page
             page_no (int): Page number
-            previous_version_id (str): Previous version UUID (None for V1)
+            previous_version_id (int): Previous version ID (None for V1)
         
         Returns:
             bool: True if page should be sent to LLM, False if unchanged
@@ -256,34 +272,53 @@ class RequirementsExtractor(metaclass=DcSingleton):
     def _compare_requirements_with_previous(
         self,
         current_requirements: List[Dict],
-        project_id: str,
-        previous_version_id: str
+        project_id: int,
+        previous_version_id: int,
+        changed_page_numbers: List[int]
     ) -> Dict[str, List[Dict]]:
         """
-        Compare current requirements with previous version using hashes.
+        Compare requirements from changed pages only with previous version.
         
         Args:
-            current_requirements (List[Dict]): New requirements with hashes
-            project_id (str): SQLite project UUID
-            previous_version_id (str): Previous version UUID
-            previous_version_id (str): Previous version UUID
+            current_requirements (List[Dict]): Requirements from changed pages
+            project_id (int): SQLite project ID
+            previous_version_id (int): Previous version ID
+            changed_page_numbers (List[int]): Page numbers that changed
         
         Returns:
             Dict: {
-                "unchanged": List[Dict],  # Reuse existing tests
-                "new": List[Dict],        # Generate tests
-                "modified": List[Dict],   # Regenerate tests
-                "removed": List[Dict]     # Mark tests obsolete
+                "unchanged": List[Dict],  # Requirements from unchanged pages (not stored again)
+                "new": List[Dict],        # New requirements on changed pages
+                "modified": List[Dict],   # Modified requirements on changed pages
+                "removed": List[Dict]     # Removed requirements from changed pages
             }
         """
-        logger.info(f"Comparing requirements with version {previous_version_id}")
+        logger.info(f"Comparing requirements on {len(changed_page_numbers)} changed pages with version {previous_version_id}")
         
         try:
-            # Get previous requirements
-            prev_reqs = self.storage.get_requirements_by_version(project_id, previous_version_id)
+            # Get ALL previous requirements
+            all_prev_reqs = self.storage.get_requirements_by_version(project_id, previous_version_id)
             
-            # Use utility function for comparison
-            return req_utils.compare_requirements_by_hash(current_requirements, prev_reqs)
+            # Split previous requirements by page
+            prev_reqs_on_changed_pages = [
+                req for req in all_prev_reqs 
+                if req.get("source_page") in changed_page_numbers
+            ]
+            prev_reqs_on_unchanged_pages = [
+                req for req in all_prev_reqs 
+                if req.get("source_page") not in changed_page_numbers
+            ]
+            
+            logger.info(f"Previous version had {len(prev_reqs_on_changed_pages)} requirements on changed pages, "
+                       f"{len(prev_reqs_on_unchanged_pages)} on unchanged pages")
+            
+            # Compare only requirements from changed pages
+            diff = req_utils.compare_requirements_by_hash(current_requirements, prev_reqs_on_changed_pages)
+            
+            # Unchanged = requirements from unchanged pages (reference only, not stored)
+            diff["unchanged"] = prev_reqs_on_unchanged_pages
+            
+            return diff
             
         except Exception as e:
             logger.error(f"Error comparing requirements: {str(e)}", exc_info=True)
@@ -294,58 +329,6 @@ class RequirementsExtractor(metaclass=DcSingleton):
                 "modified": [],
                 "removed": []
             }
-    
-    # --- Utility Methods for Backward Compatibility ----------------
-    
-    # def extract_from_file(self, file_path: str) -> Tuple[str, None]:
-    #     """
-    #     DEPRECATED: Legacy method for backward compatibility with graph_pipeline.
-    #     Returns markdown text and None for images (to match DocumentParser interface).
-        
-    #     For new code, use extract_and_store() instead.
-        
-    #     Args:
-    #         file_path (str): Path to document file
-        
-    #     Returns:
-    #         Tuple[str, None]: (markdown_text, None)
-    #     """
-    #     logger.warning("extract_from_file() is deprecated. Use extract_and_store() for MongoDB persistence.")
-        
-    #     try:
-    #         pages = self.helper.extract_doc_pages(file_path)
-    #         # Join all pages with separator
-    #         markdown = "\n\n".join([f"=== PAGE {i+1} ===\n{page}" for i, page in enumerate(pages)])
-    #         return markdown, None
-    #     except Exception as e:
-    #         logger.error(f"Error in extract_from_file: {str(e)}", exc_info=True)
-    #         return "", None
-    
-    # def get_document_pages_by_version(self, version_id: str) -> List[Dict]:
-    #     """Retrieve document pages for a specific version."""
-    #     return self.storage.get_document_pages_by_version(version_id)
-    
-    # def get_requirements_by_version(self, version_id: str) -> List[Dict]:
-    #     """Retrieve requirements for a specific version."""
-    #     return self.storage.get_requirements_by_version(version_id)
-    
-    # def compare_document_versions(self, old_version_id: str, new_version_id: str) -> Dict:
-    #     """
-    #     Compare document pages between two versions (placeholder for future implementation).
-        
-    #     Args:
-    #         old_version_id (str): Previous version UUID
-    #         new_version_id (str): New version UUID
-        
-    #     Returns:
-    #         Dict: Comparison results with added/removed/modified pages
-    #     """
-    #     logger.info(f"Version comparison placeholder - to be implemented later")
-    #     # TODO: Implement version comparison logic using page hashes
-    #     return {
-    #         "status": "not_implemented",
-    #         "message": "Version comparison will be implemented in future release"
-    #     }
 
 
 # CLI usage for testing

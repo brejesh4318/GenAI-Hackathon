@@ -3,7 +3,7 @@ LLM interaction wrapper for requirements extraction.
 Handles all LLM-related operations.
 """
 from typing import List, Dict
-from app.services.req_extract_service.llm_helpers import extract_requirements_llm_with_context
+from app.services.req_extract_service.llm_helpers import extract_requirements_llm
 from app.utilities import dc_logger
 
 logger = dc_logger.LoggerAdap(dc_logger.get_logger(__name__), {"dash-test": "V1"})
@@ -31,9 +31,8 @@ def extract_requirements_via_llm(
     """
     try:
         # Call LLM helper function
-        requirements = extract_requirements_llm_with_context(
+        requirements = extract_requirements_llm(
             chunk_text=chunk_text,
-            start_req_id=start_req_id,
             model_name=model_name
         )
         

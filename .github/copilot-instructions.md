@@ -16,74 +16,94 @@ Convert technical documents into actionable test cases with compliance traceabil
 
 #### 1. **FastAPI Application Layer** (`app/main.py`, `app/routers/`)
 - REST API exposing document upload, project management, and test case generation
-- **Modular router architecture**: Separate routers for `auth`, `projects`, `versions`, `testcases`, `dashboard`
-- Endpoints follow pattern: `/v1/dash-test/{resource}`
-- All routes mounted at `/v1/dash-test` via subapi pattern
-- Real-time middleware: process time logging, CORS (allow all), GZIP compression, Trusted Host
+- **Modular router architecture**: 7 separate routers mounted at `/v1/dash-test`
+  - `auth_router`: `/auth/*` (login, register)
+  - `dashboard_router`: Root endpoints (/, /dashboardData)
+  - `projects_router`: `/projects/*` (CRUD operations)
+  - `versions_router`: `/versions/*` (version management)
+  - `testcases_router`: `/testcases/*` (test case generation/CRUD)
+  - `requirements_router`: `/requirements/*` (document requirement extraction)
+  - `utilities_router`: `/utils/*` (file upload, export, Jira integration)
+- **Subapi pattern**: All routers included in `subapi` FastAPI instance, then mounted on main app
+- Real-time middleware: process time logging (X-Process-Time header), CORS (allow all), GZIP compression, Trusted Host
 
-#### 2. **LangGraph Agentic Workflow** (`app/services/llm_services/graph_pipeline.py`)
+#### 2. **LangGraph Agentic Workflow** (`app/services/testcase_service/graph_pipeline.py`)
 - **GraphPipe** singleton orchestrates multi-stage pipeline with LangGraph `StateGraph`
 - Workflow stages:
-  1. **file_parser** → reads document (PDF/DOCX/TXT/MD)
-  2. **brain** → routes workflow (orchestrator, decides next action)
+  1. **file_parser** → reads document using docling (PDF/DOCX/TXT/MD)
+  2. **brain** → orchestrator agent, routes workflow based on document analysis
   3. **context_builder** → extracts requirements, builds context with tools
-  4. **tools** → ToolNode handling interrupt_tool, web_search, RAG retrieval
-  5. **test_generator** → generates initial test cases
-  6. **validator** → validates and structures output using Pydantic
-- **Conditional routing**: Brain agent determines next node via `should_continue()` router
+  4. **tools** → ToolNode handling interrupt_tool (user input), web_search (Tavily), RAG retrieval
+  5. **test_generator** → generates test cases using LLM
+  6. **validator** → validates/structures output using Pydantic with retry logic
+- **Conditional routing**: Brain agent sets `state["next_action"]` to control flow
 - **Interrupt mechanism**: Uses LangGraph `interrupt()` for user input during workflow
 - **Memory/Checkpointing**: SQLite checkpointer (`langchain.db`) enables resumable workflows with thread-based state
+- **Tool binding**: LLM with tools uses `llm.bind_tools([interrupt_tool, web_search_tool, retrieve_by_standards])`
 
-#### 3. **Document Parsing** (`app/utilities/document_parser.py`)
-- **Singleton pattern**: Single instance across app
-- Supports:
-  - **Docling formats**: PDF, DOCX (extracts images as base64 data URIs)
-  - **Text formats**: TXT, MD (returns content as-is)
-- Returns tuple: `(markdown_string, list_of_base64_images)`
-- Used by both file parsing and RAG ingestion
+#### 3. **Requirements Extraction Service** (`app/services/req_extract_service/requirements_extractor.py`)
+- **RequirementsExtractor** singleton handles document → requirements → test cases flow
+- **Deep extraction**: Configurable `pages_per_chunk` (default: 10) for batch LLM processing
+- **Version-aware diffing**: Compares requirements across document versions using SHA-256 hashing
+- Stores raw document pages and extracted requirements in MongoDB
+- Links to SQLite projects/versions via `project_id` and `version_id`
+- Returns diff summary: `{"added": [], "modified": [], "removed": [], "unchanged": []}`
+- **Integration point**: Used by `requirements_router.py` for `/requirements/extract` endpoint
 
-#### 4. **LLM Abstraction** (`app/services/llm_services/`)
+#### 4. **Prompt Management** (`app/services/prompt_service.py`)
+- **PromptService** singleton with **Langfuse integration**
+- **Startup loading**: Fetches all prompts from Langfuse at initialization (defined in `constants.yaml` → `prompt_names`)
+- **In-memory caching**: `_prompt_cache` dict for fast access
+- Methods: `get(name)`, `compile(name, variables)` for template substitution
+- Prompts: brain-orchestrator-agent, compliance-researcher-agent, context-builder-agent, validator-agent, test-case-generator, requirement-extractor
+- Replaces older database-based prompt fetching for better performance
+
+#### 5. **LLM Abstraction** (`app/services/llm_services/`)
 - **LLMInterface** abstract base with sync/async support (`generate()`, `agenerate()`)
-- **LlmFactory** creates instances based on type enum (Gemini 2.5 Flash / Lite)
+- **LlmFactory** creates instances based on type enum
+- Available models (via `gemini_models.py`):
+  - `gemini_2.5_flash`: High-performance model for complex tasks
+  - `gemini-2.5-flash-lite`: Lightweight model for simple operations
 - Factory pattern allows swapping implementations without router changes
-- Both models accessed via **langchain-google-genai** bindings
+- All models accessed via **langchain-google-genai** bindings
 
-#### 5. **Hybrid Database Architecture**
+#### 6. **Hybrid Database Architecture**
 
 **SQLite + SQLAlchemy ORM** (`app/utilities/db_utilities/sqlite_implementation.py`, `models.py`)
 - **SQLiteImplement** singleton with connection pooling (StaticPool, thread-safe)
 - **ORM Models**: `Project`, `Version`, `User`, `ProjectPermission`, `AuditLog`
-- UUID-based primary keys: `id = Column(String(36), primary_key=True, default=generate_uuid)`
+- **Integer autoincrement IDs**: `id = Column(Integer, primary_key=True, autoincrement=True)`
+- **ID reuse prevention**: `__table_args__ = {'sqlite_autoincrement': True}`
 - Automatic table creation: `Base.metadata.create_all(bind=self.engine)`
 - Methods: `create()`, `get_by_id()`, `get_all()`, `update()`, `delete()`
-- Context manager for session handling:
-  ```python
-  with sqlite_client.get_session() as session:
-      project = session.query(Project).filter_by(id=project_id).first()
-  ```
+- **Relationships**: Cascade deletes (e.g., deleting project removes versions and permissions)
 
 **MongoDB (PyMongo)** (`app/utilities/db_utilities/mongo_implementation.py`)
-- **MongoImplement** singleton for test cases and prompts
-- Collections: `test_cases`, `prompts` (from constants.yaml)
+- **MongoImplement** singleton for document-oriented data
+- Collections (from `constants.yaml`):
+  - `test_cases`: Test case documents with nested arrays
+  - `requirements`: Extracted requirements with version tracking
+  - `document_pages`: Raw page-level document content with SHA-256 hashes
 - Methods: `read()`, `insert_one()`, `insert_many()`, `update_one()`
 - TestCase schema: `test_case_id`, `feature`, `title`, `steps`, `expected_result`, `compliance_reference_standard`, `compliance_reference_clause`, etc.
 
 **Why Hybrid?**
 - SQLite: Relational data (projects, versions, users, permissions) with ACID guarantees
-- MongoDB: Schema-flexible test cases with nested arrays, variable compliance fields
+- MongoDB: Schema-flexible test cases, requirements with nested arrays, variable compliance fields
 
-#### 6. **Authentication & Authorization** (`app/utilities/auth_helper.py`, `app/routers/auth_router.py`)
-- **AuthManager** singleton handles JWT tokens, password hashing (bcrypt)
+#### 7. **Authentication & Authorization** (`app/services/auth_service.py`, `app/routers/auth_router.py`)
+- **AuthService** singleton (consolidated from old `auth_helper.py`)
+- JWT token management with **python-jose**, password hashing with **bcrypt 4.0.1**
 - JWT config from constants.yaml: `secret_key`, `algorithm` (HS256), `access_token_expire_minutes` (1440 = 24h)
 - Token structure: `{"sub": user_id, "email": email, "exp": timestamp}`
-- FastAPI dependency injection: `current_user: User = Depends(AuthManager.get_current_user)`
-- Permission checks: Query `ProjectPermission` model to verify user access (`viewer`, `editor`, `owner`)
+- FastAPI dependency injection: `current_user: User = Depends(AuthService.get_current_user)`
+- Permission checks: Query `ProjectPermission` model to verify user access (viewer, editor, owner)
 - Endpoints: `/auth/register`, `/auth/login` (returns access token)
 
-#### 7. **Configuration System** (`app/utilities/constants.py`, `app/resources/constants.yaml`)
+#### 8. **Configuration System** (`app/utilities/constants.py`, `app/resources/constants.yaml`)
 - **Constants** singleton loads YAML config at module level
 - Accessed via `Constants.fetch_constant("key_name")`
-- Config includes LLM settings, MongoDB params, SQLite params, JWT settings, prompt templates, collection names
+- Config includes: LLM settings, MongoDB params, SQLite params, JWT settings, prompt names, collection names, feature flags (`deep_file_extractor`)
 
 ---
 
@@ -98,7 +118,7 @@ class MyService(metaclass=DcSingleton):
         # Single instance guaranteed across app lifecycle
         pass
 ```
-**Used by**: DocumentParser, Constants, MongoImplement, LLMInterface implementations, Helper, TestCaseGenerator, GraphPipe
+**Used by**: Constants, MongoImplement, SQLiteImplement, LLMInterface implementations, Helper, TestCaseGenerator, GraphPipe, RequirementsExtractor, PromptService, AuthService
 
 **When adding services**: Use `DcSingleton` to ensure app-wide sharing of expensive resources (DB connections, LLM clients, document parsers).
 
@@ -128,25 +148,39 @@ class AgentState(TypedDict):
 workflow_graph.add_conditional_edges("brain", self.should_continue, 
     {"context_builder": "context_builder", "test_generator": "test_generator"})
 ```
-**Location**: `app/services/llm_services/graph_pipeline.py`, `app/services/llm_services/graph_state.py`
+**Location**: `app/services/testcase_service/graph_pipeline.py`, `graph_state.py`
 
-**Key technique**: Use `next_action` field in state to control routing (like a lookup table for edges).
+**Key technique**: Use `next_action` field in state to control routing. Brain agent analyzes document and sets next node.
 
-### Pattern 4: Prompt Templating + Output Parsing
+### Pattern 4: Prompt Management with Langfuse
 ```python
-from app.services.prompt_fetch import PromptFetcher
-from langchain.output_parsers import PydanticOutputParser
+from app.services.prompt_service import PromptService
 
-fetch_prompt = PromptFetcher()
-brain_prompt = fetch_prompt.fetch("spec2test-brain-agent")  # from database
-output_parser = PydanticOutputParser(pydantic_object=AgentFormat)
-
-# Use in LLM call
-validated = output_parser.parse(llm.generate(prompt))
+prompt_service = PromptService()  # Singleton, loads all prompts at startup
+brain_prompt = prompt_service.get("brain-orchestrator-agent")
+# For templates with variables
+compiled = prompt_service.compile("test-case-generator", {"document": doc_text})
 ```
-**Location**: Prompts stored in constants.yaml or MongoDB; parsing uses Pydantic models (`app/services/reponse_format.py`)
+**Location**: `app/services/prompt_service.py`, prompts defined in Langfuse
 
-### Pattern 5: Logging with Context
+**Migration note**: Old code may use `PromptFetcher()` - new code should use `PromptService()`.
+
+### Pattern 5: FastAPI Dependency Injection for Auth
+```python
+from app.services.auth_service import AuthService
+from app.utilities.db_utilities.models import User
+
+@router.get("/protected")
+async def protected_route(current_user: User = Depends(AuthService.get_current_user)):
+    # current_user is validated User object from database
+    # Raises 401 if token invalid/expired
+    return {"user_id": current_user.id, "email": current_user.email}
+```
+**Location**: All protected endpoints use this pattern
+
+**Permission check**: After getting `current_user`, query `ProjectPermission` for resource access.
+
+### Pattern 6: Logging with Context
 ```python
 from app.utilities import dc_logger
 
@@ -166,10 +200,11 @@ logger.info("Operation completed")  # Adds context to all logs
    - Project ID validated in SQLite, permissions checked
 
 2. **Document Parsing** → `GraphPipe.file_parser()` node
-   - DocumentParser extracts markdown + images
+   - Uses docling for PDF/DOCX extraction (markdown + base64 images)
    - State populated: `file_path`, `document`, `images`
 
 3. **Brain Agent Decision** → `brain` node
+   - Analyzes document structure and complexity
    - Decides: need more context? compliance research? proceed to generation?
    - Sets `next_action` field to route workflow
 
@@ -191,6 +226,31 @@ logger.info("Operation completed")  # Adds context to all logs
    - Insert test cases to `test_cases` collection (MongoDB)
    - Update project metadata (`no_test_cases`, `updated_at`) in SQLite
 
+## Data Flow: Requirements Extraction
+
+1. **Extract Requirements** (`POST /requirements/extract`)
+   - Document uploaded with `project_id`, `version_id`, optional `previous_version_id`
+   
+2. **Document Parsing** → `RequirementsExtractor.extract_and_store()`
+   - Parse document into pages using docling (PDF/DOCX/TXT/MD support)
+   - Hash each page with SHA-256 for change detection
+   - Store raw pages to `document_pages` collection
+
+3. **Batch LLM Processing**
+   - Process document in chunks (configurable `pages_per_chunk`, default: 10)
+   - LLM extracts requirements from each chunk using `requirement-extractor` prompt
+   - Returns structured requirements with IDs, descriptions, priority, etc.
+
+4. **Version Diffing** (if `previous_version_id` provided)
+   - Load previous version's requirements from MongoDB
+   - Compare using SHA-256 hashes: `{"added": [], "modified": [], "removed": [], "unchanged": []}`
+   - Identify which requirements need new test case generation
+
+5. **Persistence**
+   - Store requirements to `requirements` collection (MongoDB)
+   - Link to SQLite project/version via `project_id` and `version_id`
+   - Return diff summary + `generate_tests_for` list
+
 ---
 
 ## Critical Developer Workflows
@@ -205,11 +265,17 @@ poetry install --no-interaction --no-ansi
 
 ### Running Locally
 ```powershell
-# Set environment variables first (see .env requirements below)
+# Required environment variables:
+# - GOOGLE_CRED: Base64-encoded GCP service account JSON (for Gemini API)
+# - MONGO_DB_URI: MongoDB connection string  
+# - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST: For prompt management
+
 # Start FastAPI dev server
 uvicorn app.main:app --reload --port 8000
-# Test endpoint
-Invoke-WebRequest http://localhost:8000/v1/dash-test/
+
+# Test endpoints
+Invoke-WebRequest http://localhost:8000/  # Health check
+Invoke-WebRequest http://localhost:8000/v1/dash-test/  # Subapi health
 ```
 
 ### Running Tests
@@ -221,23 +287,43 @@ pytest app/
 ### Docker Build & Deploy
 ```bash
 docker build -t genai-hackathon:latest .
-docker run -p 8080:8080 --env GOOGLE_CRED='<base64_gcp_key>' genai-hackathon
+docker run -p 8080:8080 \
+  --env GOOGLE_CRED='<base64_gcp_key>' \
+  --env MONGO_DB_URI='<connection_string>' \
+  genai-hackathon
 ```
-**Note**: Dockerfile uses Python 3.12 from deadsnakes PPA, Poetry package manager, Gunicorn with UvicornWorker.
+**Note**: Dockerfile uses Python 3.12 from deadsnakes PPA, Poetry package manager, Gunicorn with UvicornWorker (4 workers).
 
-### Environment Variables Required
-- **GOOGLE_CRED**: Base64-encoded GCP service account JSON (for Gemini API)
-- **MONGO_DB_URI**: MongoDB connection string
-- All config in `app/resources/constants.yaml`
+### Debugging LangGraph Workflows
 
-### Debugging Graph Workflow
+**Visualize graph structure:**
 ```python
-# In graph_pipeline.py, uncomment to generate PNG:
+# In graph_pipeline.py
 png = workflow_graph.get_graph().draw_mermaid_png()
 with open("workflow_graph.png", "wb") as f:
     f.write(png)
-# Visualize workflow state at any node:
-logger.debug(f"State: {state}")
+```
+
+**Inspect state at any node:**
+```python
+# Add to node functions
+logger.debug(f"Current state: {state}")
+logger.debug(f"Next action: {state.get('next_action')}")
+```
+
+**Resume interrupted workflows:**
+```python
+# Use thread_id to resume from checkpointer
+config = {"configurable": {"thread_id": thread_id}}
+result = graph_pipeline.graph.invoke(state, config)
+```
+
+**Check stored checkpoints:**
+```bash
+# SQLite database: langchain.db
+sqlite3 langchain.db
+.tables  # Shows checkpoint-related tables
+SELECT * FROM checkpoints LIMIT 10;
 ```
 
 ---
@@ -274,7 +360,7 @@ test_case = mongo_client.read("test_cases", {"_id": ObjectId(testcase_id)}, max_
 # Convert ObjectId back to string for responses
 return {"testcase_id": str(test_case["_id"])}
 ```
-**Note**: SQLite uses UUID strings; no ObjectId conversion needed for projects/versions/users.
+**Note**: SQLite uses integer autoincrement IDs; no ObjectId conversion needed for projects/versions/users.
 
 ### 4. **Temp File Cleanup Pattern**
 ```python
@@ -285,7 +371,7 @@ finally:
     if os.path.exists(path):
         os.remove(path)
 ```
-**Location**: `app/routers/router.py` in `testcaseGenerator` endpoint.
+**Location**: Used in `testcases_router.py` for document uploads.
 
 ### 5. **Batching External API Calls**
 ```python
@@ -295,7 +381,33 @@ for i in range(0, len(issues), BATCH_SIZE):
     # send to Jira
     await asyncio.sleep(1)  # Rate limiting
 ```
-**Location**: `/jiraPush` endpoint for Jira bulk issue creation.
+**Location**: `/jiraPush` endpoint in `utilities_router.py` for Jira bulk issue creation.
+
+### 6. **Router Registration Pattern**
+```python
+# In main.py - all routers mounted on subapi
+subapi = FastAPI(title="Dash-Test API", version="v1")
+subapi.include_router(auth_router.router)  # No prefix conflicts
+subapi.include_router(projects_router.router)
+app.mount("/v1/dash-test", subapi)
+```
+**Why**: Clean namespace separation, versioning support, easier testing.
+
+### 7. **Permission Checking Pattern**
+```python
+# In protected endpoint
+user_perms = sqlite_client.get_all(
+    ProjectPermission,
+    filters={"project_id": project_id, "user_id": current_user.id}
+)
+if not user_perms:
+    raise HTTPException(status_code=403, detail={...})
+
+# Check role if needed
+if user_perms[0].role not in ["editor", "owner"]:
+    raise HTTPException(status_code=403, detail={"message": "Insufficient permissions"})
+```
+**Roles**: `viewer` (read-only), `editor` (modify), `owner` (full control, delete).
 
 ---
 
@@ -316,7 +428,7 @@ for i in range(0, len(issues), BATCH_SIZE):
 
 ### Add a New API Endpoint
 1. Choose appropriate router file (`projects_router.py`, `testcases_router.py`, etc.)
-2. Create async function with auth dependency: `current_user: User = Depends(AuthManager.get_current_user)`
+2. Create async function with auth dependency: `current_user: User = Depends(AuthService.get_current_user)`
 3. Use SQLiteImplement for projects/versions/permissions; MongoImplement for test cases
 4. Check permissions: Query `ProjectPermission` model with `user_id` and `project_id`
 5. Follow error handling convention (HTTPException with detail dict)
@@ -324,7 +436,7 @@ for i in range(0, len(issues), BATCH_SIZE):
 Example:
 ```python
 @router.get("/projects/{project_id}")
-async def get_project(project_id: str, current_user: User = Depends(AuthManager.get_current_user)):
+async def get_project(project_id: int, current_user: User = Depends(AuthService.get_current_user)):
     # Check permission
     perms = sqlite_client.get_all(ProjectPermission, filters={"project_id": project_id, "user_id": current_user.id})
     if not perms:
@@ -339,6 +451,13 @@ async def get_project(project_id: str, current_user: User = Depends(AuthManager.
 2. Reference via `Constants.fetch_constant("mongo_collections")["collection_name"]`
 3. Use MongoImplement methods: `read()`, `insert_one()`, `insert_many()`, `update_one()`
 
+### Add a New Prompt to Langfuse
+1. Create prompt in Langfuse UI with specific name (e.g., "my-new-prompt")
+2. Add prompt name to `constants.yaml` under `prompt_names` list
+3. Restart app to load prompt into cache
+4. Access via `PromptService().get("my-new-prompt")`
+5. For templates: Use `{{variable_name}}` syntax, compile with `PromptService().compile("name", {"variable_name": "value"})`
+
 ---
 
 ## Known Limitations & Future Work
@@ -346,7 +465,6 @@ async def get_project(project_id: str, current_user: User = Depends(AuthManager.
 - **Single file upload**: `files[0]` hardcoded in testcaseGenerator (TODO: handle multiple files)
 - **No test suite**: Minimal unit/integration tests
 - **Interrupt handling**: Currently basic; resume logic could be more robust
-- **Prompt fetching**: Mix of YAML and MongoDB storage (consolidate to one source)
 - **Compliance standards**: Currently RAG/web search; could pre-ingest standard documents
 
 ---
@@ -356,13 +474,14 @@ async def get_project(project_id: str, current_user: User = Depends(AuthManager.
 | File | Purpose |
 |------|---------|
 | `app/main.py` | FastAPI app initialization, middleware setup |
-| `app/routers/router.py` | All API endpoints (project, test case, export, Jira) |
 | `app/routers/projects_router.py` | Project CRUD operations with auth |
 | `app/routers/testcases_router.py` | Test case generation and management |
+| `app/routers/requirements_router.py` | Requirements extraction and version diffing |
 | `app/routers/auth_router.py` | User registration, login, token management |
-| `app/services/llm_services/graph_pipeline.py` | LangGraph workflow orchestration |
-| `app/utilities/document_parser.py` | Multi-format document ingestion |
-| `app/utilities/auth_helper.py` | JWT token creation/validation, password hashing |
+| `app/services/testcase_service/graph_pipeline.py` | LangGraph workflow orchestration |
+| `app/services/req_extract_service/requirements_extractor.py` | Deep document parsing and requirement extraction |
+| `app/services/prompt_service.py` | Langfuse-based prompt management with caching |
+| `app/services/auth_service.py` | JWT token creation/validation, password hashing |
 | `app/utilities/db_utilities/models.py` | SQLAlchemy ORM models (Project, User, Version, etc.) |
 | `app/utilities/constants.py` | YAML-based configuration |
 | `app/utilities/helper.py` | Utility functions for LLM calls, file ops |
@@ -374,9 +493,9 @@ async def get_project(project_id: str, current_user: User = Depends(AuthManager.
 
 ## Questions to Clarify Before Major Changes
 
-1. **Prompt Storage**: Should all prompts move to MongoDB or stay in YAML?
-2. **Compliance Standards**: Pre-load standards into vector DB for faster retrieval?
-3. **Test Generation Logic**: Should validation use a separate LLM from generation for quality?
-4. **User Interrupts**: Should interrupt responses be streamed or returned as batch?
-5. **Multi-file Support**: How should document relationships be modeled?
+1. **Compliance Standards**: Pre-load standards into vector DB for faster retrieval?
+2. **Test Generation Logic**: Should validation use a separate LLM from generation for quality?
+3. **User Interrupts**: Should interrupt responses be streamed or returned as batch?
+4. **Multi-file Support**: How should document relationships be modeled?
+5. **Performance Optimization**: Should we add Redis for caching frequently accessed data?
 
